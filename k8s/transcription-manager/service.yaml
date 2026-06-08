@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: transcription-manager
+  namespace: asr-platform
+spec:
+  type: ClusterIP
+  selector:
+    app: transcription-manager
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000

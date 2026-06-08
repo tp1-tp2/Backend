@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+  namespace: asr-platform
+data:
+  SERVICE_NAME: "user-service"
+  EMAIL_CONFIRMATION_TIMEOUT_SECONDS: "30"
+  EMAIL_CHANGE_EXPIRY_HOURS: "24"
+  MIN_AGE_YEARS: "13"

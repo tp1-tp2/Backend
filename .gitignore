@@ -1,0 +1,38 @@
+/contexto
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+
+# Whisper model weights
+models/
+*.pt
+*.bin
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Secrets
+.env.*
+secrets/

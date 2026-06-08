@@ -1,0 +1,144 @@
+version: "3.9"
+
+services:
+  api-gateway:
+    build: ./services/api-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - SERVICE_NAME=api-gateway
+      - AUTH_SERVICE_URL=http://auth-service:8001
+      - USER_SERVICE_URL=http://user-service:8002
+      - AUDIO_PROCESSOR_URL=http://audio-processor:8003
+      - ASR_SERVICE_URL=http://asr-service:8004
+      - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8005
+    depends_on:
+      - auth-service
+      - user-service
+      - audio-processor
+      - transcription-manager
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  auth-service:
+    build: ./services/auth-service
+    ports:
+      - "8001:8000"
+    environment:
+      - SERVICE_NAME=auth-service
+      - DATABASE_URL=postgresql+asyncpg://auth_user:auth_pass@auth-db:5432/auth_db
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-changeme_in_production}
+    depends_on:
+      - auth-db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  user-service:
+    build: ./services/user-service
+    ports:
+      - "8002:8000"
+    environment:
+      - SERVICE_NAME=user-service
+      - DATABASE_URL=postgresql+asyncpg://user_user:user_pass@user-db:5432/user_db
+    depends_on:
+      - user-db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  audio-processor:
+    build: ./services/audio-processor
+    ports:
+      - "8003:8000"
+    environment:
+      - SERVICE_NAME=audio-processor
+      - DATABASE_URL=postgresql+asyncpg://audio_user:audio_pass@audio-db:5432/audio_db
+      - ASR_SERVICE_URL=http://asr-service:8004
+      - STORAGE_URL=${STORAGE_URL:-local}
+    depends_on:
+      - audio-db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  asr-service:
+    build: ./services/asr-service
+    ports:
+      - "8004:8000"
+    environment:
+      - SERVICE_NAME=asr-service
+      - WHISPER_MODEL=medium
+      - WHISPER_LANGUAGE=qu
+      - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8005
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+
+  transcription-manager:
+    build: ./services/transcription-manager
+    ports:
+      - "8005:8000"
+    environment:
+      - SERVICE_NAME=transcription-manager
+      - DATABASE_URL=postgresql+asyncpg://trans_user:trans_pass@trans-db:5432/trans_db
+    depends_on:
+      - trans-db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  auth-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_pass
+      POSTGRES_DB: auth_db
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+
+  user-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: user_user
+      POSTGRES_PASSWORD: user_pass
+      POSTGRES_DB: user_db
+    volumes:
+      - user_db_data:/var/lib/postgresql/data
+
+  audio-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: audio_user
+      POSTGRES_PASSWORD: audio_pass
+      POSTGRES_DB: audio_db
+    volumes:
+      - audio_db_data:/var/lib/postgresql/data
+
+  trans-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: trans_user
+      POSTGRES_PASSWORD: trans_pass
+      POSTGRES_DB: trans_db
+    volumes:
+      - trans_db_data:/var/lib/postgresql/data
+
+volumes:
+  auth_db_data:
+  user_db_data:
+  audio_db_data:
+  trans_db_data:

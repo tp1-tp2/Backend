@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+  namespace: asr-platform
+data:
+  SERVICE_NAME: "api-gateway"
+  AUTH_SERVICE_URL: "http://auth-service:8000"
+  USER_SERVICE_URL: "http://user-service:8000"
+  AUDIO_PROCESSOR_URL: "http://audio-processor:8000"
+  ASR_SERVICE_URL: "http://asr-service:8000"
+  TRANSCRIPTION_MANAGER_URL: "http://transcription-manager:8000"
+  REQUEST_TIMEOUT: "30"
