@@ -19,6 +19,8 @@ class AudioUploadResponse(BaseModel):
     audio_id: str
     processed_path: str
     metadata: AudioMetadata
+    transcription_id: str | None = None
+    transcription_text: str | None = None
 
     model_config = {"populate_by_name": True}
 
