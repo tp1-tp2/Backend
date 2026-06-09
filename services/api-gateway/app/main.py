@@ -1,10 +1,20 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 
+from app.api.routes import (
+    auth_router,
+    dashboard_router,
+    streaming_router,
+    transcriptions_router,
+    users_router,
+)
 from app.core.config import settings
+from app.core.response import error_response
 
 
 @asynccontextmanager
@@ -27,6 +37,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(dashboard_router)
+app.include_router(transcriptions_router)
+app.include_router(streaming_router)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    from fastapi import HTTPException
+
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            return error_response(
+                error_code=detail.get("errorCode", "SYSTEM_001"),
+                message=detail.get("message", str(exc)),
+                status_code=exc.status_code,
+            )
+        return error_response("SYSTEM_001", str(detail), exc.status_code)
+
+    return error_response("SYSTEM_001", "An unexpected error occurred", 500)
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        routes=app.routes,
+    )
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+    }
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi  # type: ignore[method-assign]
 
 
 @app.get("/health")
