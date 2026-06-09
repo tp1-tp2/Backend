@@ -9,13 +9,17 @@ class LoginRequest(BaseModel):
 class UserInfo(BaseModel):
     user_id: str
     email: str
-    full_name: str
+    full_name: str = ""
 
 
 class TokenResponse(BaseModel):
     token: str
     expires_in: int = 86400
     user: UserInfo
+
+
+class LogoutRequest(BaseModel):
+    token: str
 
 
 class PasswordRecoveryRequest(BaseModel):
