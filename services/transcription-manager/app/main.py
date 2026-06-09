@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI
 
+from app.api.routes import internal_router, transcriptions_router
 from app.core.config import settings
 
 
@@ -14,6 +15,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ASR Platform - Transcription Manager", version=settings.version, lifespan=lifespan
 )
+
+app.include_router(transcriptions_router)
+app.include_router(internal_router)
 
 
 @app.get("/health")
