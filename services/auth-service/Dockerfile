@@ -10,4 +10,4 @@ COPY . .
 ENV PATH=/root/.local/bin:$PATH
 EXPOSE 8000
 HEALTHCHECK CMD curl -f http://localhost:8000/health || exit 1
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"]
