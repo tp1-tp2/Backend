@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     version: str = "1.0.0"
 
     database_url: str = "postgresql+asyncpg://user_user:user_pass@localhost:5432/user_db"
+    auth_service_url: str = "http://auth-service:8000"
     email_confirmation_timeout_seconds: int = 30
     email_change_expiry_hours: int = 24
     min_age_years: int = 13

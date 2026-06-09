@@ -21,7 +21,7 @@ def _svc(session: AsyncSession = Depends(get_session)) -> AuthService:
 async def create_credential(
     body: CreateCredentialRequest, svc: AuthService = Depends(_svc)
 ):
-    await svc.create_credential(body.user_id, body.email, body.password_hash)
+    await svc.create_credential(body.user_id, body.email, body.password)
     return {"status": "created"}
 
 

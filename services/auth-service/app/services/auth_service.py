@@ -85,10 +85,8 @@ class AuthService:
         user_id = payload.user_id if payload else ""
         await self._blocklist.add(token_hash, user_id, expires_at)
 
-    async def create_credential(
-        self, user_id: str, email: str, password_hash: str
-    ) -> None:
-        await self._credentials.create(user_id, email, password_hash)
+    async def create_credential(self, user_id: str, email: str, password: str) -> None:
+        await self._credentials.create(user_id, email, hash_password(password))
 
     async def initiate_recovery(self, email: str) -> None:
         credential = await self._credentials.get_by_email(email)

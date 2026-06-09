@@ -36,7 +36,7 @@ class PasswordResetRequest(BaseModel):
 class CreateCredentialRequest(BaseModel):
     user_id: str
     email: EmailStr
-    password_hash: str
+    password: str  # plain-text; Auth Service hashes before persisting
 
 
 class ValidateTokenRequest(BaseModel):
