@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     whisper_language: str = "qu"
     device: str = "cpu"  # "cuda" for GPU in production
 
+    auth_service_url: str = "http://auth-service:8000"
     transcription_manager_url: str = "http://transcription-manager:8000"
     max_concurrent_connections: int = 100
     streaming_partial_interval_seconds: int = 3

@@ -88,6 +88,8 @@ class AudioService:
                     "audio_path": out_path,
                     "user_id": user_id,
                     "audio_id": audio_id,
+                    "audio_filename": file.filename or f"{audio_id}.{ext}",
+                    "audio_duration": float(metadata.duration),
                 },
                 timeout=300,  # Whisper can be slow
             )

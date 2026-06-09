@@ -35,3 +35,5 @@ class TranscribeForwardRequest(BaseModel):
     audio_path: str
     user_id: str
     audio_id: str
+    audio_filename: str
+    audio_duration: float

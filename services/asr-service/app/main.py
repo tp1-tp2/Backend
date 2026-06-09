@@ -1,33 +1,39 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
 
+from app.api.routes import internal_router, streaming_router
 from app.core.config import settings
+from app.services import whisper_service
 
-_model = None
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Model loading happens in task 6.1
-    # import whisper
-    # global _model
-    # _model = whisper.load_model(settings.whisper_model, device=settings.device)
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, whisper_service.load_model)
+    except Exception as exc:
+        logger.error("Whisper model failed to load: %s", exc)
     yield
-    _model = None
 
 
 app = FastAPI(title="ASR Platform - ASR Service", version=settings.version, lifespan=lifespan)
 
+app.include_router(internal_router)
+app.include_router(streaming_router)
+
 
 @app.get("/health")
 async def health_check():
-    model_status = "loaded" if _model is not None else "not_loaded"
     return {
         "status": "healthy",
         "service": settings.service_name,
         "version": settings.version,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "checks": {"whisper_model": model_status},
+        "checks": {"whisper_model": "loaded" if whisper_service.is_loaded() else "not_loaded"},
     }
