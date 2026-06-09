@@ -1,28 +1,35 @@
-version: "3.9"
-
 services:
+
+  # ── API GATEWAY ─────────────────────────────────────────────────────────────
   api-gateway:
     build: ./services/api-gateway
     ports:
       - "8000:8000"
     environment:
       - SERVICE_NAME=api-gateway
-      - AUTH_SERVICE_URL=http://auth-service:8001
-      - USER_SERVICE_URL=http://user-service:8002
-      - AUDIO_PROCESSOR_URL=http://audio-processor:8003
-      - ASR_SERVICE_URL=http://asr-service:8004
-      - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8005
+      - AUTH_SERVICE_URL=http://auth-service:8000
+      - USER_SERVICE_URL=http://user-service:8000
+      - AUDIO_PROCESSOR_URL=http://audio-processor:8000
+      - ASR_SERVICE_URL=http://asr-service:8000
+      - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8000
     depends_on:
-      - auth-service
-      - user-service
-      - audio-processor
-      - transcription-manager
+      auth-service:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      audio-processor:
+        condition: service_healthy
+      transcription-manager:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 15s
+    restart: on-failure
 
+  # ── AUTH SERVICE ─────────────────────────────────────────────────────────────
   auth-service:
     build: ./services/auth-service
     ports:
@@ -32,13 +39,17 @@ services:
       - DATABASE_URL=postgresql+asyncpg://auth_user:auth_pass@auth-db:5432/auth_db
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-changeme_in_production}
     depends_on:
-      - auth-db
+      auth-db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 40s
+    restart: on-failure
 
+  # ── USER SERVICE ─────────────────────────────────────────────────────────────
   user-service:
     build: ./services/user-service
     ports:
@@ -46,14 +57,21 @@ services:
     environment:
       - SERVICE_NAME=user-service
       - DATABASE_URL=postgresql+asyncpg://user_user:user_pass@user-db:5432/user_db
+      - AUTH_SERVICE_URL=http://auth-service:8000
     depends_on:
-      - user-db
+      user-db:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 40s
+    restart: on-failure
 
+  # ── AUDIO PROCESSOR ──────────────────────────────────────────────────────────
   audio-processor:
     build: ./services/audio-processor
     ports:
@@ -61,16 +79,22 @@ services:
     environment:
       - SERVICE_NAME=audio-processor
       - DATABASE_URL=postgresql+asyncpg://audio_user:audio_pass@audio-db:5432/audio_db
-      - ASR_SERVICE_URL=http://asr-service:8004
+      - ASR_SERVICE_URL=http://asr-service:8000
       - STORAGE_URL=${STORAGE_URL:-local}
     depends_on:
-      - audio-db
+      audio-db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 40s
+    restart: on-failure
 
+  # ── ASR SERVICE ──────────────────────────────────────────────────────────────
+  # Nota: el primer build descarga whisper-medium (~1.5 GB).
+  # start_period largo permite que el modelo cargue antes del primer healthcheck.
   asr-service:
     build: ./services/asr-service
     ports:
@@ -79,13 +103,20 @@ services:
       - SERVICE_NAME=asr-service
       - WHISPER_MODEL=medium
       - WHISPER_LANGUAGE=qu
-      - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8005
+      - AUTH_SERVICE_URL=http://auth-service:8000
+      - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8000
+    depends_on:
+      auth-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 60s
+      interval: 30s
       timeout: 30s
-      retries: 3
+      retries: 5
+      start_period: 120s
+    restart: on-failure
 
+  # ── TRANSCRIPTION MANAGER ────────────────────────────────────────────────────
   transcription-manager:
     build: ./services/transcription-manager
     ports:
@@ -94,13 +125,17 @@ services:
       - SERVICE_NAME=transcription-manager
       - DATABASE_URL=postgresql+asyncpg://trans_user:trans_pass@trans-db:5432/trans_db
     depends_on:
-      - trans-db
+      trans-db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 40s
+    restart: on-failure
 
+  # ── BASES DE DATOS ───────────────────────────────────────────────────────────
   auth-db:
     image: postgres:16-alpine
     environment:
@@ -109,6 +144,11 @@ services:
       POSTGRES_DB: auth_db
     volumes:
       - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   user-db:
     image: postgres:16-alpine
@@ -118,6 +158,11 @@ services:
       POSTGRES_DB: user_db
     volumes:
       - user_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user_user -d user_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   audio-db:
     image: postgres:16-alpine
@@ -127,6 +172,11 @@ services:
       POSTGRES_DB: audio_db
     volumes:
       - audio_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audio_user -d audio_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   trans-db:
     image: postgres:16-alpine
@@ -136,6 +186,11 @@ services:
       POSTGRES_DB: trans_db
     volumes:
       - trans_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trans_user -d trans_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   auth_db_data:
