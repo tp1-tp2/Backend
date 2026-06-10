@@ -6,8 +6,9 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
-# Import Base so target_metadata includes all ORM models
-from app.db.base import Base  # noqa: F401 — side-effects import ORM models
+# Import Base, then models so Base.metadata includes all tables for autogenerate
+from app.db.base import Base  # noqa: F401
+from app.models.user import EmailChangeRequest, UserProfile  # noqa: F401
 
 config = context.config
 

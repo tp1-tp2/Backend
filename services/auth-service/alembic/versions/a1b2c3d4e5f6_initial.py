@@ -18,13 +18,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # --- ENUM TYPE ---
-    account_status_enum = sa.Enum(
-        "active", "locked", "disabled", name="account_status_enum"
-    )
-    account_status_enum.create(op.get_bind(), checkfirst=True)
-
     # --- users_credentials ---
+    # sa.Enum with a name auto-creates the PostgreSQL TYPE on first use.
+    # Do NOT call enum.create() separately — op.create_table handles it.
     op.create_table(
         "users_credentials",
         sa.Column("user_id", sa.String(36), nullable=False),
