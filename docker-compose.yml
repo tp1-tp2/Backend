@@ -81,6 +81,8 @@ services:
       - DATABASE_URL=postgresql+asyncpg://audio_user:audio_pass@audio-db:5432/audio_db
       - ASR_SERVICE_URL=http://asr-service:8000
       - STORAGE_URL=${STORAGE_URL:-local}
+    volumes:
+      - asr_audio:/tmp/asr_audio
     depends_on:
       audio-db:
         condition: service_healthy
@@ -101,10 +103,11 @@ services:
       - "8004:8000"
     environment:
       - SERVICE_NAME=asr-service
-      - WHISPER_MODEL=medium
-      - WHISPER_LANGUAGE=qu
+      - MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned
       - AUTH_SERVICE_URL=http://auth-service:8000
       - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8000
+    volumes:
+      - asr_audio:/tmp/asr_audio
     depends_on:
       auth-service:
         condition: service_healthy
@@ -197,3 +200,4 @@ volumes:
   user_db_data:
   audio_db_data:
   trans_db_data:
+  asr_audio:

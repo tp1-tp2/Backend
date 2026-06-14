@@ -11,30 +11,55 @@ from app.schemas.transcription import TranscribeResponse, WordConfidenceSchema
 
 logger = logging.getLogger(__name__)
 
-_model = None
+_pipe = None
 
 
 def load_model():
-    import whisper  # heavy import — kept local so tests can run without it
-    global _model
-    logger.info("Loading Whisper model '%s' on device '%s'", settings.whisper_model, settings.device)
-    _model = whisper.load_model(settings.whisper_model, device=settings.device)
-    logger.info("Whisper model loaded")
-    return _model
+    """Load the fine-tuned Quechua Whisper model via transformers pipeline."""
+    from transformers import pipeline
+    global _pipe
+    device = 0 if settings.device == "cuda" else -1  # transformers: 0=first GPU, -1=CPU
+    logger.info("Loading model '%s' on device '%s'", settings.model_id, settings.device)
+    _pipe = pipeline(
+        "automatic-speech-recognition",
+        model=settings.model_id,
+        return_timestamps="word",
+        device=device,
+    )
+    logger.info("Model loaded successfully")
+    return _pipe
 
 
 def is_loaded() -> bool:
-    return _model is not None
+    return _pipe is not None
 
 
 def _run_whisper(audio_path: str) -> dict:
-    """Blocking call — must be run inside run_in_executor."""
-    return _model.transcribe(
-        audio_path,
-        language=settings.whisper_language,
-        word_timestamps=True,
-        fp16=(settings.device == "cuda"),
-    )
+    """Blocking call — must be run inside run_in_executor.
+
+    Returns a dict with 'text' and 'segments' keys to stay compatible
+    with streaming_service.py and _extract_words().
+    """
+    import soundfile as sf
+    audio_array, sample_rate = sf.read(audio_path, dtype="float32")
+    # Pipeline accepts {"array": np.ndarray, "sampling_rate": int} — no ffmpeg needed
+    result = _pipe({"array": audio_array, "sampling_rate": sample_rate}, return_timestamps="word")
+    text = (result.get("text") or "").strip()
+    chunks = result.get("chunks", [])
+
+    words = []
+    for chunk in chunks:
+        ts = chunk.get("timestamp") or (0.0, 0.0)
+        start = ts[0] if ts[0] is not None else 0.0
+        end = ts[1] if ts[1] is not None else start
+        words.append({
+            "word": (chunk.get("text") or "").strip(),
+            "probability": 1.0,  # transformers pipeline does not expose per-word confidence
+            "start": start,
+            "end": end,
+        })
+
+    return {"text": text, "segments": [{"words": words}]}
 
 
 def _extract_words(segments: list) -> list[WordConfidenceSchema]:
@@ -42,9 +67,12 @@ def _extract_words(segments: list) -> list[WordConfidenceSchema]:
     seq = 0
     for segment in segments:
         for w in segment.get("words", []):
+            word_text = w.get("word", "").strip()
+            if not word_text:
+                continue
             words.append(
                 WordConfidenceSchema(
-                    word=w.get("word", "").strip(),
+                    word=word_text,
                     confidence=float(w.get("probability", 1.0)),
                     start_time=float(w.get("start", 0.0)),
                     end_time=float(w.get("end", 0.0)),
@@ -66,7 +94,9 @@ async def transcribe(
         raise ModelUnavailableError()
 
     loop = asyncio.get_event_loop()
-    timeout = max(30.0, audio_duration * 5.0)
+    # CPU inference with transformers can take 60-180s on first call (warm-up).
+    # Keep well below the audio-processor's 300s caller timeout.
+    timeout = max(250.0, audio_duration * 15.0)
     t0 = datetime.now(timezone.utc)
 
     try:

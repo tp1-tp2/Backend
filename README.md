@@ -1,12 +1,12 @@
 # 🎙️ Plataforma ASR Quechua — Backend
 
-> Sistema de reconocimiento automático de voz (ASR) para el idioma **quechua**, construido como arquitectura de microservicios con Python/FastAPI y OpenAI Whisper.
+> Sistema de reconocimiento automático de voz (ASR) para el idioma **quechua**, construido como arquitectura de microservicios con Python/FastAPI y un modelo Whisper fine-tuneado para quechua.
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
-![Whisper](https://img.shields.io/badge/Whisper-medium-412991?logo=openai&logoColor=white)
+![Whisper](https://img.shields.io/badge/Whisper-Quechua_finetuned-412991?logo=huggingface&logoColor=white)
 ![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-2.0-D71F00?logo=sqlalchemy&logoColor=white)
 
 ---
@@ -46,7 +46,7 @@ graph TD
 | **auth-service** | 8001 | Emisión de JWT (HS256), bcrypt, rate limiting, recuperación de contraseña |
 | **user-service** | 8002 | Registro, perfil de usuario, cambio de email |
 | **audio-processor** | 8003 | Validación de formato/tamaño, conversión con ffmpeg, reenvío a ASR |
-| **asr-service** | 8004 | Transcripción con Whisper medium (quechua), streaming WebSocket |
+| **asr-service** | 8004 | Transcripción con `QuechuaBase/whisper-base-qxp-finetuned` (Puno Quechua), streaming WebSocket |
 | **transcription-manager** | 8005 | Historial paginado, descarga en TXT / JSON / SRT |
 
 ---
@@ -98,7 +98,7 @@ docker compose up --build
 La primera ejecución realiza automáticamente:
 
 1. Construye las 6 imágenes Docker
-2. Descarga el modelo **Whisper medium** (~1.5 GB) — puede tardar varios minutos
+2. Descarga el modelo **[QuechuaBase/whisper-base-qxp-finetuned](https://huggingface.co/QuechuaBase/whisper-base-qxp-finetuned)** desde HuggingFace — puede tardar varios minutos
 3. Levanta las 4 bases de datos PostgreSQL y espera a que estén listas (`pg_isready`)
 4. Ejecuta las migraciones **Alembic** (`alembic upgrade head`) en cada servicio
 5. Inicia todos los servicios; el gateway espera a que los 4 pasen su healthcheck
@@ -209,15 +209,15 @@ Cada servicio acepta variables de entorno propias que se pueden sobreescribir en
 **asr-service**
 | Variable | Default |
 |---|---|
-| `WHISPER_MODEL` | `medium` |
-| `WHISPER_LANGUAGE` | `qu` (quechua) |
+| `MODEL_ID` | `QuechuaBase/whisper-base-qxp-finetuned` |
+| `DEVICE` | `cpu` (`cuda` para GPU) |
 | `AUTH_SERVICE_URL` | `http://auth-service:8000` |
 | `TRANSCRIPTION_MANAGER_URL` | `http://transcription-manager:8000` |
 
-Para usar el modelo `tiny` (más rápido, menos preciso) durante desarrollo:
+Para cambiar el modelo HuggingFace:
 ```bash
 # En docker-compose.yml, cambiar:
-WHISPER_MODEL=tiny
+MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned
 ```
 </details>
 
@@ -379,16 +379,18 @@ docker compose exec auth-service alembic history
 ## ⚠️ Notas importantes
 
 <details>
-<summary><strong>Primera ejecución — modelo Whisper</strong></summary>
+<summary><strong>Primera ejecución — modelo ASR Quechua</strong></summary>
 
-El servicio `asr-service` descarga **whisper-medium** (~1.5 GB) durante la primera construcción de la imagen. Este proceso puede tardar entre 5 y 20 minutos dependiendo de la conexión a internet.
+El servicio `asr-service` descarga **[QuechuaBase/whisper-base-qxp-finetuned](https://huggingface.co/QuechuaBase/whisper-base-qxp-finetuned)** desde HuggingFace durante la primera construcción de la imagen. Este proceso puede tardar entre 2 y 10 minutos dependiendo de la conexión a internet.
 
-Las siguientes ejecuciones son instantáneas porque la capa queda cacheada en Docker.
+El modelo es un **Whisper-base fine-tuneado para Puno Quechua (qxp)** usando datos de Mozilla Common Voice. Usa la librería `transformers` (no `openai-whisper`).
 
-Para acelerar el desarrollo usa el modelo `tiny`:
+Las siguientes ejecuciones son instantáneas porque el modelo queda cacheado en el volumen Docker `/root/.cache/huggingface`.
+
+Para cambiar el modelo (por ejemplo a otro fine-tune de quechua):
 ```bash
-# En docker-compose.yml:
-- WHISPER_MODEL=tiny
+# En docker-compose.yml, bajo asr-service > environment:
+- MODEL_ID=otro-usuario/otro-modelo-quechua
 ```
 
 </details>

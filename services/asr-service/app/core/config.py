@@ -5,8 +5,7 @@ class Settings(BaseSettings):
     service_name: str = "asr-service"
     version: str = "1.0.0"
 
-    whisper_model: str = "medium"
-    whisper_language: str = "qu"
+    model_id: str = "QuechuaBase/whisper-base-qxp-finetuned"
     device: str = "cpu"  # "cuda" for GPU in production
 
     auth_service_url: str = "http://auth-service:8000"
