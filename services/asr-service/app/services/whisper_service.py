@@ -16,13 +16,20 @@ _pipe = None
 
 def load_model():
     """Load the fine-tuned Quechua Whisper model via transformers pipeline."""
-    from transformers import pipeline
+    import logging as _logging
+    from transformers import pipeline, WhisperTokenizer
     global _pipe
+    # Suppress cosmetic BPE tokenization and logits processor warnings
+    _logging.getLogger("transformers").setLevel(_logging.ERROR)
     device = 0 if settings.device == "cuda" else -1  # transformers: 0=first GPU, -1=CPU
     logger.info("Loading model '%s' on device '%s'", settings.model_id, settings.device)
+    tokenizer = WhisperTokenizer.from_pretrained(
+        settings.model_id, clean_up_tokenization_spaces=False
+    )
     _pipe = pipeline(
         "automatic-speech-recognition",
         model=settings.model_id,
+        tokenizer=tokenizer,
         return_timestamps="word",
         device=device,
     )

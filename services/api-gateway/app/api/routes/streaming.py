@@ -41,15 +41,31 @@ async def ws_proxy(websocket: WebSocket, token: str = Query(...)):
 
             async def client_to_asr():
                 try:
-                    async for message in websocket.iter_text():
-                        await asr_ws.send(message)
+                    while True:
+                        message = await websocket.receive()
+                        if message["type"] == "websocket.disconnect":
+                            break
+                        # Forward binary (MediaRecorder chunks) or text as-is
+                        if message.get("bytes"):
+                            await asr_ws.send(message["bytes"])
+                        elif message.get("text"):
+                            await asr_ws.send(message["text"])
                 except WebSocketDisconnect:
                     pass
+                finally:
+                    # Signal asr-service that the client is done
+                    try:
+                        await asr_ws.close()
+                    except Exception:
+                        pass
 
             async def asr_to_client():
                 try:
                     async for message in asr_ws:
-                        await websocket.send_text(message)
+                        if isinstance(message, bytes):
+                            await websocket.send_bytes(message)
+                        else:
+                            await websocket.send_text(message)
                 except Exception:
                     pass
 

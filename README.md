@@ -13,30 +13,138 @@
 
 ## 📐 Arquitectura
 
+### Arquitectura Lógica
+
 ```mermaid
 graph TD
-    Client(["👤 Cliente / Browser"]) --> GW
-
-    subgraph Docker Network
-        GW["🔀 API Gateway<br/>:8000 (público)"]
-
-        GW -->|JWT + proxy| Auth["🔐 Auth Service<br/>:8001"]
-        GW -->|registro + perfil| User["👤 User Service<br/>:8002"]
-        GW -->|upload audio| Audio["🎵 Audio Processor<br/>:8003"]
-        GW -->|historial + descarga| Trans["📄 Transcription Manager<br/>:8005"]
-        GW -->|WebSocket proxy| ASR["🤖 ASR Service<br/>:8004"]
-
-        Audio -->|reenvío WAV| ASR
-
-        Auth --- AuthDB[("auth-db\nPostgreSQL")]
-        User --- UserDB[("user-db\nPostgreSQL")]
-        Audio --- AudioDB[("audio-db\nPostgreSQL")]
-        Trans --- TransDB[("trans-db\nPostgreSQL")]
+    subgraph PRESENTACION["🖥️ CAPA DE PRESENTACIÓN"]
+        WEB["Angular Web App<br/>(Dashboard · Subir Audio · Streaming<br/>Historial · API Docs · Configuración)"]
+        SWAGGER["Swagger UI<br/>/api/docs"]
+        LANDING["Landing Page<br/>(HTML · CSS · JS)"]
     end
+
+    subgraph SERVICIOS["⚙️ CAPA DE SERVICIOS"]
+        GW["🔀 API Gateway<br/>Punto de entrada único · JWT · CORS"]
+
+        subgraph AUTH_GROUP["Identidad"]
+            AUTH["🔐 Auth Service<br/>JWT HS256 · bcrypt · rate limiting"]
+        end
+
+        subgraph USER_GROUP["Usuarios"]
+            USER["👤 User Service<br/>Registro · Perfil"]
+        end
+
+        subgraph AUDIO_GROUP["Procesamiento de Audio"]
+            AUDIO["🎵 Audio Processor<br/>Validación · ffmpeg → WAV 16kHz mono"]
+            ASR["🤖 ASR Service<br/>Whisper fine-tuned Quechua<br/>REST + WebSocket streaming"]
+        end
+
+        subgraph TRANS_GROUP["Transcripciones"]
+            TRANS["📄 Transcription Manager<br/>Historial · Descarga TXT/JSON/SRT"]
+        end
+    end
+
+    subgraph DATOS["🗄️ CAPA DE DATOS"]
+        DB1[("auth-db\nPostgreSQL")]
+        DB2[("user-db\nPostgreSQL")]
+        DB3[("audio-db\nPostgreSQL")]
+        DB4[("trans-db\nPostgreSQL")]
+    end
+
+    WEB -->|HTTP REST · WebSocket| GW
+    SWAGGER --> GW
+    LANDING -.->|enlace externo| WEB
+
+    GW --> AUTH
+    GW --> USER
+    GW --> AUDIO
+    GW --> TRANS
+    GW -->|WS proxy| ASR
+    AUDIO -->|WAV + metadata| ASR
+    ASR -->|persiste resultado| TRANS
+
+    AUTH --- DB1
+    USER --- DB2
+    AUDIO --- DB3
+    TRANS --- DB4
 
     style GW fill:#1a73e8,color:#fff
     style ASR fill:#412991,color:#fff
+    style PRESENTACION fill:#e8f5e9,stroke:#2e7d32
+    style SERVICIOS fill:#e3f2fd,stroke:#1565c0
+    style DATOS fill:#fff3e0,stroke:#e65100
 ```
+
+---
+
+### Arquitectura Física
+
+```mermaid
+graph TD
+    USER_BROWSER(["👤 Usuario\nNavegador"])
+
+    subgraph FIREBASE["🔥 Firebase Hosting"]
+        FE["Angular App\n(SPA estática)"]
+        LP["Landing Page\n(HTML estático)"]
+    end
+
+    subgraph AZURE["☁️ Azure Container Apps"]
+        direction TB
+
+        subgraph INGRESS["Ingress público"]
+            GW_C["🔀 api-gateway\nContainer · :8000\nIngress habilitado"]
+        end
+
+        subgraph INTERNAL["Red interna (sin ingress)"]
+            AUTH_C["🔐 auth-service\nContainer · :8001"]
+            USER_C["👤 user-service\nContainer · :8002"]
+            AUDIO_C["🎵 audio-processor\nContainer · :8003"]
+            ASR_C["🤖 asr-service\nContainer · :8004\nWhisper fine-tuned"]
+            TRANS_C["📄 transcription-manager\nContainer · :8005"]
+        end
+
+        subgraph VOLUME["Volumen compartido"]
+            VOL[("asr_audio/\nWAV procesados")]
+        end
+
+        subgraph DATABASES["Azure Database for PostgreSQL"]
+            DB1_P[("auth-db")]
+            DB2_P[("user-db")]
+            DB3_P[("audio-db")]
+            DB4_P[("trans-db")]
+        end
+    end
+
+    USER_BROWSER -->|HTTPS| FE
+    USER_BROWSER -->|HTTPS| LP
+    FE -->|API REST · WSS| GW_C
+
+    GW_C --> AUTH_C
+    GW_C --> USER_C
+    GW_C --> AUDIO_C
+    GW_C --> TRANS_C
+    GW_C -->|WSS proxy| ASR_C
+
+    AUDIO_C -->|escribe WAV| VOL
+    ASR_C -->|lee WAV| VOL
+    ASR_C --> TRANS_C
+
+    AUTH_C --- DB1_P
+    USER_C --- DB2_P
+    AUDIO_C --- DB3_P
+    TRANS_C --- DB4_P
+
+    style GW_C fill:#1a73e8,color:#fff
+    style ASR_C fill:#412991,color:#fff
+    style FIREBASE fill:#fff8e1,stroke:#f9a825
+    style AZURE fill:#e3f2fd,stroke:#1565c0
+    style INGRESS fill:#bbdefb,stroke:#1976d2
+    style INTERNAL fill:#e8eaf6,stroke:#3949ab
+    style VOLUME fill:#f3e5f5,stroke:#7b1fa2
+    style DATABASES fill:#e8f5e9,stroke:#388e3c
+```
+
+---
 
 ### Responsabilidades por servicio
 
@@ -57,8 +165,8 @@ graph TD
 |---|---|---|
 | **Docker Desktop** | 24 + | Modo **Linux containers** en Windows |
 | **Git** | 2.x | — |
-| **RAM disponible** | 8 GB | Whisper medium usa ~4 GB en inferencia |
-| **Espacio en disco** | 5 GB | Imágenes Docker + modelo Whisper (~1.5 GB) |
+| **RAM disponible** | 4 GB | Whisper-base fine-tuned usa ~1 GB en inferencia CPU |
+| **Espacio en disco** | 4 GB | Imágenes Docker + modelo HuggingFace (~300 MB) |
 
 > **Windows**: verificar que Docker Desktop esté en modo Linux containers antes de continuar.
 

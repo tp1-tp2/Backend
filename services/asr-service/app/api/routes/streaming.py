@@ -1,6 +1,4 @@
 import asyncio
-import base64
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -65,6 +63,8 @@ async def stream(websocket: WebSocket, token: str = Query(...)):
         return
 
     partial_task: asyncio.Task | None = None
+    # True when client sends "stop" text while keeping the WS open
+    graceful_stop = False
 
     async def _send_partials():
         while True:
@@ -80,34 +80,39 @@ async def stream(websocket: WebSocket, token: str = Query(...)):
         partial_task = asyncio.create_task(_send_partials())
 
         # 3. Main receive loop
+        #    - binary frames  → raw PCM chunks from MediaRecorder
+        #    - text frame     → "stop" signal: client finished recording, keep WS open
         while True:
-            raw = await websocket.receive_text()
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                await websocket.send_text(_error("WS_001", "Invalid JSON"))
-                continue
-
-            if msg.get("type") == "audio":
-                data_b64 = msg.get("data", "")
-                try:
-                    chunk_bytes = base64.b64decode(data_b64)
-                    manager.append_chunk(session_id, chunk_bytes)
-                except Exception:
-                    await websocket.send_text(_error("WS_002", "Invalid base64 audio data"))
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                break
+            chunk_bytes = message.get("bytes") or b""
+            if chunk_bytes:
+                manager.append_chunk(session_id, chunk_bytes)
+            elif message.get("text"):
+                # Any text message = stop signal
+                graceful_stop = True
+                break
 
     except WebSocketDisconnect:
         logger.info("Client disconnected session=%s", session_id)
     finally:
+        # Cancel partials task and wait for it to avoid concurrent Whisper calls
         if partial_task:
             partial_task.cancel()
-
-        # 4. Finalize: run full transcription on accumulated buffer
-        final = await manager.finalize(session_id, user_id)
-        if final:
             try:
-                await websocket.send_text(final.model_dump_json())
-            except Exception:
+                await partial_task
+            except asyncio.CancelledError:
                 pass
+
+        # 4. Finalize only when client sent stop signal (connection still open)
+        #    If the client disconnected abruptly, skip the expensive inference.
+        if graceful_stop:
+            final = await manager.finalize(session_id, user_id)
+            if final:
+                try:
+                    await websocket.send_text(final.model_dump_json())
+                except Exception:
+                    pass
 
         await manager.disconnect(session_id)
