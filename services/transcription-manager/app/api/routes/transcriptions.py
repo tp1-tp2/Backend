@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +35,15 @@ async def get_transcription(
     svc: TranscriptionService = Depends(_svc),
 ):
     return await svc.get_by_id(transcription_id, x_user_id)
+
+
+@router.delete("/{transcription_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_transcription(
+    transcription_id: str,
+    x_user_id: str = Header(..., alias="X-User-Id"),
+    svc: TranscriptionService = Depends(_svc),
+):
+    await svc.delete_by_id(transcription_id, x_user_id)
 
 
 @router.get("/{transcription_id}/download")

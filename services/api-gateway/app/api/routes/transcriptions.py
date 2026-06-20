@@ -81,6 +81,24 @@ async def get_transcription(
         raise ServiceUnavailableError("transcription-manager") from exc
 
 
+@router.delete("/api/v1/transcriptions/{transcription_id}")
+async def delete_transcription(
+    transcription_id: str,
+    http: httpx.AsyncClient = Depends(get_http_client),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        resp = await http.delete(
+            f"{settings.transcription_manager_url}/api/v1/transcriptions/{transcription_id}",
+            headers={"X-User-Id": user["user_id"]},
+        )
+        return _fwd(resp)
+    except httpx.TimeoutException as exc:
+        raise GatewayTimeoutError() from exc
+    except httpx.ConnectError as exc:
+        raise ServiceUnavailableError("transcription-manager") from exc
+
+
 @router.get("/api/v1/transcriptions/{transcription_id}/download")
 async def download_transcription(
     transcription_id: str,

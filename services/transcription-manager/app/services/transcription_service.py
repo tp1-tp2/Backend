@@ -96,6 +96,14 @@ class TranscriptionService:
             ),
         )
 
+    async def delete_by_id(self, transcription_id: str, user_id: str) -> None:
+        t = await self._trans.get_by_id(transcription_id)
+        if not t:
+            raise TranscriptionNotFoundError()
+        if t.user_id != user_id:
+            raise AccessDeniedError()
+        await self._trans.delete(t)
+
     async def get_summary(self, user_id: str) -> TranscriptionSummary:
         total = await self._trans.count_by_user(user_id)
         latest_at = await self._trans.get_latest_date_by_user(user_id)

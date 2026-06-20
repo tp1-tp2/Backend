@@ -49,6 +49,10 @@ class TranscriptionRepository:
         )
         return result.scalar_one_or_none()
 
+    async def delete(self, transcription: Transcription) -> None:
+        await self._session.delete(transcription)
+        await self._session.commit()
+
     async def create(
         self,
         transcription_id: str,
