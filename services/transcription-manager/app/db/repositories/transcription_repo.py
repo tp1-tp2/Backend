@@ -53,6 +53,12 @@ class TranscriptionRepository:
         await self._session.delete(transcription)
         await self._session.commit()
 
+    async def rename(self, transcription: Transcription, audio_filename: str) -> Transcription:
+        transcription.audio_filename = audio_filename
+        await self._session.commit()
+        await self._session.refresh(transcription)
+        return transcription
+
     async def create(
         self,
         transcription_id: str,

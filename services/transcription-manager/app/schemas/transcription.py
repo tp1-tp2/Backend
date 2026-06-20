@@ -50,6 +50,10 @@ class TranscriptionListResponse(BaseModel):
     pagination: PaginationMeta
 
 
+class RenameTranscriptionRequest(BaseModel):
+    audio_filename: str = Field(..., min_length=1, max_length=255)
+
+
 # ---------- Internal (service-to-service) ----------
 
 class CreateTranscriptionRequest(BaseModel):

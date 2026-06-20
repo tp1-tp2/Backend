@@ -1,5 +1,5 @@
 import httpx
-from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
 from app.api.dependencies import get_current_user, get_http_client
@@ -72,6 +72,26 @@ async def get_transcription(
     try:
         resp = await http.get(
             f"{settings.transcription_manager_url}/api/v1/transcriptions/{transcription_id}",
+            headers={"X-User-Id": user["user_id"]},
+        )
+        return _fwd(resp)
+    except httpx.TimeoutException as exc:
+        raise GatewayTimeoutError() from exc
+    except httpx.ConnectError as exc:
+        raise ServiceUnavailableError("transcription-manager") from exc
+
+
+@router.patch("/api/v1/transcriptions/{transcription_id}")
+async def rename_transcription(
+    transcription_id: str,
+    body: dict = Body(...),
+    http: httpx.AsyncClient = Depends(get_http_client),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        resp = await http.patch(
+            f"{settings.transcription_manager_url}/api/v1/transcriptions/{transcription_id}",
+            json=body,
             headers={"X-User-Id": user["user_id"]},
         )
         return _fwd(resp)

@@ -3,7 +3,11 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_session
-from app.schemas.transcription import TranscriptionListResponse, TranscriptionResponse
+from app.schemas.transcription import (
+    RenameTranscriptionRequest,
+    TranscriptionListResponse,
+    TranscriptionResponse,
+)
 from app.services.download_service import DownloadService
 from app.services.transcription_service import TranscriptionService
 
@@ -35,6 +39,16 @@ async def get_transcription(
     svc: TranscriptionService = Depends(_svc),
 ):
     return await svc.get_by_id(transcription_id, x_user_id)
+
+
+@router.patch("/{transcription_id}", response_model=TranscriptionResponse)
+async def rename_transcription(
+    transcription_id: str,
+    body: RenameTranscriptionRequest,
+    x_user_id: str = Header(..., alias="X-User-Id"),
+    svc: TranscriptionService = Depends(_svc),
+):
+    return await svc.rename_by_id(transcription_id, x_user_id, body.audio_filename)
 
 
 @router.delete("/{transcription_id}", status_code=status.HTTP_204_NO_CONTENT)
