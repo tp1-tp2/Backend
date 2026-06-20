@@ -2,6 +2,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    model_config = {"protected_namespaces": ("settings_",), "env_file": ".env"}
+
     service_name: str = "asr-service"
     version: str = "1.0.0"
 
@@ -14,9 +16,6 @@ class Settings(BaseSettings):
     streaming_partial_interval_seconds: int = 3
     audio_buffer_max_seconds: int = 30
     audio_chunk_ms: int = 100
-
-    class Config:
-        env_file = ".env"
 
 
 settings = Settings()

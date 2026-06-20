@@ -26,6 +26,7 @@ class TranscribeResponse(BaseModel):
     text: str
     confidence_scores: list[WordConfidenceSchema] = []
     processing_time: float
+    audio_duration: float = 0.0
 
 
 # ---------- WebSocket streaming messages ----------
@@ -49,6 +50,7 @@ class FinalResultMessage(BaseModel):
     transcription_id: str
     text: str
     confidence_scores: list[WordConfidenceSchema] = []
+    duration: float = 0.0
     timestamp: datetime
 
 
@@ -73,5 +75,6 @@ class StreamingSession(BaseModel):
     user_id: str
     started_at: datetime
     last_activity_at: datetime
+    sample_rate: int = 16000
     audio_buffer: list[AudioChunk] = []
     partial_transcriptions: list[PartialResultMessage] = []

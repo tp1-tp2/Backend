@@ -30,7 +30,6 @@ def load_model():
         "automatic-speech-recognition",
         model=settings.model_id,
         tokenizer=tokenizer,
-        return_timestamps="word",
         device=device,
     )
     logger.info("Model loaded successfully")
@@ -49,8 +48,25 @@ def _run_whisper(audio_path: str) -> dict:
     """
     import soundfile as sf
     audio_array, sample_rate = sf.read(audio_path, dtype="float32")
-    # Pipeline accepts {"array": np.ndarray, "sampling_rate": int} — no ffmpeg needed
-    result = _pipe({"array": audio_array, "sampling_rate": sample_rate}, return_timestamps="word")
+    # return_timestamps=True gives segment-level timestamps from the generated
+    # special tokens directly. return_timestamps="word" forces transformers to
+    # additionally compute and keep cross-attention weights for every layer to
+    # run DTW alignment, which spikes RAM by several GB even on short clips —
+    # that was the cause of the asr-service OOM kills (exit code 137).
+    # The fine-tuned checkpoint's generation_config defaults to "spanish" (Quechua
+    # text was trained under the Spanish language token, there's no dedicated
+    # Quechua token in Whisper's vocabulary). Without forcing it explicitly here,
+    # the pipeline runs language auto-detection, which hallucinates into unrelated
+    # languages (observed: Japanese) on ambiguous/quiet audio.
+    result = _pipe(
+        {"array": audio_array, "sampling_rate": sample_rate},
+        return_timestamps=True,
+        generate_kwargs={
+            "language": "spanish",
+            "task": "transcribe",
+            "no_repeat_ngram_size": 3,
+        },
+    )
     text = (result.get("text") or "").strip()
     chunks = result.get("chunks", [])
 
@@ -59,12 +75,19 @@ def _run_whisper(audio_path: str) -> dict:
         ts = chunk.get("timestamp") or (0.0, 0.0)
         start = ts[0] if ts[0] is not None else 0.0
         end = ts[1] if ts[1] is not None else start
-        words.append({
-            "word": (chunk.get("text") or "").strip(),
-            "probability": 1.0,  # transformers pipeline does not expose per-word confidence
-            "start": start,
-            "end": end,
-        })
+        chunk_words = (chunk.get("text") or "").strip().split()
+        if not chunk_words:
+            continue
+        span = (end - start) / len(chunk_words) if end > start else 0.0
+        for i, w in enumerate(chunk_words):
+            w_start = start + i * span
+            w_end = w_start + span if span else end
+            words.append({
+                "word": w,
+                "probability": 1.0,  # transformers pipeline does not expose per-word confidence
+                "start": w_start,
+                "end": w_end,
+            })
 
     return {"text": text, "segments": [{"words": words}]}
 
@@ -143,4 +166,5 @@ async def transcribe(
         text=text,
         confidence_scores=words,
         processing_time=processing_time,
+        audio_duration=audio_duration,
     )

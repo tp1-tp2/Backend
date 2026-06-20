@@ -104,10 +104,13 @@ services:
     environment:
       - SERVICE_NAME=asr-service
       - MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned
+      - HF_HUB_DISABLE_IMPLICIT_TOKEN=1
       - AUTH_SERVICE_URL=http://auth-service:8000
       - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8000
     volumes:
       - asr_audio:/tmp/asr_audio
+    mem_limit: 4g
+    memswap_limit: 4g
     depends_on:
       auth-service:
         condition: service_healthy

@@ -42,7 +42,7 @@ def _error(code: str, message: str) -> str:
 
 
 @router.websocket("/ws/stream")
-async def stream(websocket: WebSocket, token: str = Query(...)):
+async def stream(websocket: WebSocket, token: str = Query(...), sample_rate: int = Query(16000)):
     await websocket.accept()
 
     # 1. Validate JWT
@@ -56,7 +56,7 @@ async def stream(websocket: WebSocket, token: str = Query(...)):
 
     # 2. Check capacity + create session
     try:
-        session_id = await manager.connect(user_id)
+        session_id = await manager.connect(user_id, sample_rate)
     except CapacityReachedError:
         await websocket.send_text(_error("ASR_003", "Service capacity limit reached"))
         await websocket.close(code=1013)
@@ -80,23 +80,28 @@ async def stream(websocket: WebSocket, token: str = Query(...)):
         partial_task = asyncio.create_task(_send_partials())
 
         # 3. Main receive loop
-        #    - binary frames  → raw PCM chunks from MediaRecorder
+        #    - binary frames  → raw 16-bit PCM chunks from AudioContext/ScriptProcessorNode,
+        #                       at the sample_rate negotiated via the query param
         #    - text frame     → "stop" signal: client finished recording, keep WS open
         while True:
             message = await websocket.receive()
             if message["type"] == "websocket.disconnect":
+                logger.info("[STREAM] Client disconnected abruptly session=%s", session_id)
                 break
             chunk_bytes = message.get("bytes") or b""
             if chunk_bytes:
                 manager.append_chunk(session_id, chunk_bytes)
+                logger.debug("[STREAM] Received chunk %d bytes session=%s", len(chunk_bytes), session_id)
             elif message.get("text"):
-                # Any text message = stop signal
+                logger.info("[STREAM] Received STOP signal session=%s", session_id)
                 graceful_stop = True
                 break
 
     except WebSocketDisconnect:
-        logger.info("Client disconnected session=%s", session_id)
+        logger.info("[STREAM] WebSocketDisconnect session=%s", session_id)
     finally:
+        logger.info("[STREAM] Finalizing session=%s graceful=%s", session_id, graceful_stop)
+
         # Cancel partials task and wait for it to avoid concurrent Whisper calls
         if partial_task:
             partial_task.cancel()
@@ -105,14 +110,23 @@ async def stream(websocket: WebSocket, token: str = Query(...)):
             except asyncio.CancelledError:
                 pass
 
-        # 4. Finalize only when client sent stop signal (connection still open)
-        #    If the client disconnected abruptly, skip the expensive inference.
-        if graceful_stop:
-            final = await manager.finalize(session_id, user_id)
-            if final:
-                try:
-                    await websocket.send_text(final.model_dump_json())
-                except Exception:
-                    pass
+        # 4. Always finalize — result is persisted to DB via transcription-manager
+        #    regardless of whether the client is still connected.
+        #    If graceful_stop=True the client is waiting → delivery succeeds.
+        #    If the client disconnected, send_text fails silently and the result
+        #    is still available via GET /api/v1/transcriptions.
+        buf_size = len(manager._buffers.get(session_id, b""))
+        logger.info("[STREAM] Buffer size before finalize: %d bytes", buf_size)
+
+        final = await manager.finalize(session_id, user_id)
+        if final:
+            logger.info("[STREAM] Finalize complete text=%r", final.text[:80] if final.text else "")
+            try:
+                await websocket.send_text(final.model_dump_json())
+                logger.info("[STREAM] Final result sent to client")
+            except Exception as exc:
+                logger.warning("[STREAM] Could not send final result (client gone?): %s", exc)
+        else:
+            logger.warning("[STREAM] Finalize returned None (empty buffer or model not loaded)")
 
         await manager.disconnect(session_id)

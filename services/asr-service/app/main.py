@@ -1,6 +1,9 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("app").setLevel(logging.DEBUG)
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
