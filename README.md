@@ -283,7 +283,7 @@ GET    /api/v1/transcriptions/{id}    Detalle con word confidences
 GET    /api/v1/transcriptions/{id}/download?format=txt|json|srt
 
 # Streaming
-WS     /ws/stream?token=<jwt>         Streaming en tiempo real (WebSocket)
+WS     /ws/stream?token=<jwt>&sample_rate=<hz>   Streaming en tiempo real (WebSocket)
 ```
 
 ---
@@ -517,7 +517,30 @@ Si la base de datos no está lista, el contenedor falla y Docker lo reinicia gra
 </details>
 
 <details>
-<summary><strong>Streaming WebSocket — ejemplo con wscat</strong></summary>
+<summary><strong>Streaming WebSocket — protocolo y ejemplo con wscat</strong></summary>
+
+**Protocolo:**
+
+1. El cliente conecta a `ws://.../ws/stream?token=<jwt>&sample_rate=<hz>`.
+   - `sample_rate` es la frecuencia **real** del audio capturado (ej. `48000`, el nativo del `AudioContext` del navegador). Si se omite, el backend asume `16000`.
+   - **Importante:** el audio debe capturarse con la **Web Audio API** (`AudioContext` + `ScriptProcessorNode`/`AudioWorkletNode`) para obtener PCM crudo. `MediaRecorder` (con su codec por defecto, normalmente Opus/WebM comprimido) **no es compatible** — el backend interpreta los bytes recibidos como PCM 16-bit mono crudo, y datos comprimidos producen ruido/alucinaciones en la transcripción.
+2. El cliente envía **frames binarios**: PCM 16-bit mono crudo, a la frecuencia indicada en `sample_rate`.
+3. El servidor responde cada pocos segundos con un mensaje de texto parcial:
+   ```json
+   {"type": "partial", "text": "...", "timestamp": "..."}
+   ```
+4. Al terminar de grabar, el cliente envía un **frame de texto** con el valor `"stop"` (sin cerrar el socket) y espera el resultado final:
+   ```json
+   {
+     "type": "final",
+     "transcription_id": "...",
+     "text": "...",
+     "duration": 12.4,
+     "confidence_scores": [{"word": "...", "confidence": 1.0, "start_time": 0.0, "end_time": 0.5, "sequence_number": 0}],
+     "timestamp": "..."
+   }
+   ```
+5. El servidor cierra la conexión después de enviar el resultado final.
 
 ```bash
 # Instalar wscat
@@ -528,10 +551,11 @@ TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"user@test.com","password":"password123"}' | python -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
-# 2. Conectar al stream
-wscat -c "ws://localhost:8000/ws/stream?token=$TOKEN"
+# 2. Conectar al stream (sample_rate del AudioContext del navegador, normalmente 48000)
+wscat -c "ws://localhost:8000/ws/stream?token=$TOKEN&sample_rate=48000"
 
-# 3. Enviar chunks de audio (base64) y recibir transcripciones parciales en tiempo real
+# 3. Enviar chunks binarios de PCM 16-bit mono crudo (no Opus/WebM)
+# 4. Enviar el texto "stop" para finalizar y recibir el resultado final
 ```
 
 </details>
