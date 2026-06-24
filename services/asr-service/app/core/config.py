@@ -14,7 +14,13 @@ class Settings(BaseSettings):
     transcription_manager_url: str = "http://transcription-manager:8000"
     max_concurrent_connections: int = 100
     streaming_partial_interval_seconds: int = 3
-    audio_buffer_max_seconds: int = 30
+    # Caps the rolling PCM buffer kept per streaming session. Raw PCM is cheap in
+    # memory (even 10 min at 48kHz/16-bit mono is ~57MB) — the real OOM risk was
+    # concurrent Whisper inference threads (see _partial_running in
+    # streaming_service.py), not buffer size. A low cap here silently discards the
+    # OLDEST audio once exceeded, which truncates real speech from the start of a
+    # long recording while only trailing silence survives to finalize().
+    audio_buffer_max_seconds: int = 600
     audio_chunk_ms: int = 100
 
 
