@@ -48,6 +48,20 @@ async def test_append_chunk_unknown_session_ignored():
     mgr.append_chunk("nonexistent", b"\xff")  # must not raise
 
 
+async def test_partial_buffer_trims_independently_of_full_buffer():
+    mgr = ConnectionManager()
+    sid = await mgr.connect("user-1", sample_rate=16000)
+    with patch("app.services.streaming_service.settings") as mock_cfg:
+        mock_cfg.audio_buffer_max_seconds = 600
+        mock_cfg.partial_window_seconds = 1  # 1s = 32000 bytes at 16kHz/16-bit mono
+        mgr.append_chunk(sid, b"\x00" * 40000)
+    # Full buffer (used by finalize) keeps everything.
+    assert len(mgr._buffers[sid]) == 40000
+    # Partial buffer (used by get_partial) is trimmed to the short window.
+    assert len(mgr._partial_buffers[sid]) == 32000
+    await mgr.disconnect(sid)
+
+
 async def test_get_partial_no_model_returns_none():
     mgr = ConnectionManager()
     sid = await mgr.connect("user-1")

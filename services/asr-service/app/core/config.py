@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     # long recording while only trailing silence survives to finalize().
     audio_buffer_max_seconds: int = 600
     audio_chunk_ms: int = 100
+    # Separate, much shorter window used only for partial (live) transcription.
+    # get_partial() re-transcribes this whole window from scratch every tick, so
+    # keeping it small is what keeps partials catching up with real-time speech
+    # instead of falling further behind as the session grows. finalize() is
+    # unaffected — it still uses the full audio_buffer_max_seconds buffer.
+    partial_window_seconds: int = 10
 
 
 settings = Settings()

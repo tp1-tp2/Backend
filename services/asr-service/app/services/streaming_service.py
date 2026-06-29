@@ -44,6 +44,7 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._sessions: dict[str, StreamingSession] = {}
         self._buffers: dict[str, bytearray] = {}
+        self._partial_buffers: dict[str, bytearray] = {}
         self._partial_running: dict[str, bool] = {}
         self._lock = asyncio.Lock()
 
@@ -65,6 +66,7 @@ class ConnectionManager:
                 sample_rate=sample_rate,
             )
             self._buffers[session_id] = bytearray()
+            self._partial_buffers[session_id] = bytearray()
             self._partial_running[session_id] = False
             return session_id
 
@@ -72,6 +74,7 @@ class ConnectionManager:
         async with self._lock:
             self._sessions.pop(session_id, None)
             self._buffers.pop(session_id, None)
+            self._partial_buffers.pop(session_id, None)
             self._partial_running.pop(session_id, None)
 
     def _bytes_per_second(self, session_id: str) -> int:
@@ -80,13 +83,23 @@ class ConnectionManager:
         return sample_rate * _BYTES_PER_SAMPLE
 
     def append_chunk(self, session_id: str, data: bytes) -> None:
+        bytes_per_second = self._bytes_per_second(session_id)
         if session_id in self._buffers:
-            max_bytes = settings.audio_buffer_max_seconds * self._bytes_per_second(session_id)
+            max_bytes = settings.audio_buffer_max_seconds * bytes_per_second
             buf = self._buffers[session_id]
             buf.extend(data)
-            # Trim to max window — keep the most recent audio
+            # Trim to max window — keep the most recent audio. This buffer feeds
+            # finalize(), so it keeps the full session context.
             if len(buf) > max_bytes:
                 del buf[: len(buf) - max_bytes]
+        if session_id in self._partial_buffers:
+            partial_max_bytes = settings.partial_window_seconds * bytes_per_second
+            pbuf = self._partial_buffers[session_id]
+            pbuf.extend(data)
+            # Much shorter window — this is what get_partial() re-transcribes on
+            # every tick, so keeping it small keeps partials near real-time.
+            if len(pbuf) > partial_max_bytes:
+                del pbuf[: len(pbuf) - partial_max_bytes]
         if session_id in self._sessions:
             self._sessions[session_id].last_activity_at = datetime.now(timezone.utc)
 
@@ -98,7 +111,7 @@ class ConnectionManager:
         # multiple concurrent Whisper inferences would pile up and OOM the container.
         if self._partial_running.get(session_id, False):
             return None
-        buf = bytes(self._buffers.get(session_id, b""))
+        buf = bytes(self._partial_buffers.get(session_id, b""))
         if not buf:
             return None
 
