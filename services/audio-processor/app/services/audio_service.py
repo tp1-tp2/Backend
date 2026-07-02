@@ -82,14 +82,15 @@ class AudioService:
         transcription_id = None
         transcription_text = None
         try:
+            wav_bytes = Path(out_path).read_bytes()
             resp = await self._http.post(
                 f"{settings.asr_service_url}/internal/asr/transcribe",
-                json={
-                    "audio_path": out_path,
+                files={"file": (f"{audio_id}.wav", wav_bytes, "audio/wav")},
+                data={
                     "user_id": user_id,
                     "audio_id": audio_id,
                     "audio_filename": file.filename or f"{audio_id}.{ext}",
-                    "audio_duration": float(metadata.duration),
+                    "audio_duration": str(float(metadata.duration)),
                 },
                 timeout=300,  # Whisper can be slow
             )
