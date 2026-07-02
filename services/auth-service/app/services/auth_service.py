@@ -18,6 +18,7 @@ from app.core.security import (
     hash_token,
     verify_password,
 )
+from app.core.email import send_recovery_email
 from app.db.repositories import BlocklistRepository, CredentialRepository, RecoveryRepository
 from app.schemas.auth import TokenResponse, UserInfo, ValidateTokenResponse
 from app.services.rate_limiter import rate_limiter
@@ -99,14 +100,7 @@ class AuthService:
             hours=settings.recovery_token_expiry_hours
         )
         await self._recovery.create(token, credential.user_id, email, expires_at)
-
-        # TODO: replace with actual email service (SMTP / SendGrid)
-        logger.info(
-            "Password recovery token for %s: %s (expires %s)",
-            email,
-            token,
-            expires_at.isoformat(),
-        )
+        await send_recovery_email(email, token, expires_at.isoformat())
 
     async def reset_password(self, token: str, new_password: str) -> None:
         entry = await self._recovery.get_valid(token)

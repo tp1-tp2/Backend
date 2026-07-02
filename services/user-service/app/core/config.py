@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     email_change_expiry_hours: int = 24
     min_age_years: int = 13
 
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""  # empty string → stub mode (logs to console, no email sent)
+    smtp_password: str = ""
+    smtp_from: str = "noreply@asr-quechua.com"
+    frontend_url: str = "http://localhost:4200"
+
     class Config:
         env_file = ".env"
 

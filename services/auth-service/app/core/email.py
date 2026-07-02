@@ -35,19 +35,13 @@ async def _send(to: str, subject: str, html_body: str) -> None:
         raise
 
 
-async def send_confirmation(to: str, user_id: str) -> None:
-    html = """
-<p>¡Bienvenido a <strong>ASR Quechua</strong>!</p>
-<p>Tu cuenta ha sido registrada correctamente. Ya puedes iniciar sesión y empezar a transcribir audio en quechua.</p>
-"""
-    await _send(to, "¡Bienvenido a ASR Quechua!", html)
-
-
-async def send_verification_link(to: str, token: str, link_type: str) -> None:
-    link = f"{settings.frontend_url}/verify-email?token={token}&type={link_type}"
+async def send_recovery_email(to: str, token: str, expires_iso: str) -> None:
+    link = f"{settings.frontend_url}/auth/reset-password?token={token}"
     html = f"""
-<p>Haz clic en el siguiente enlace para verificar tu nuevo correo electrónico:</p>
-<p><a href="{link}">Verificar correo electrónico</a></p>
-<p>Si no realizaste este cambio, ignora este mensaje.</p>
+<p>Hola,</p>
+<p>Recibiste este correo porque solicitaste recuperar tu contraseña en <strong>ASR Quechua</strong>.</p>
+<p><a href="{link}">Restablecer contraseña</a></p>
+<p>Este enlace caduca el <strong>{expires_iso} (UTC)</strong>.</p>
+<p>Si no realizaste esta solicitud, ignora este mensaje. Tu contraseña no cambiará.</p>
 """
-    await _send(to, "Verifica tu correo electrónico – ASR Quechua", html)
+    await _send(to, "Recuperación de contraseña – ASR Quechua", html)

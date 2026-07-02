@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     recovery_token_length: int = 32
     recovery_token_expiry_hours: int = 1
 
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""  # empty string → stub mode (logs to console, no email sent)
+    smtp_password: str = ""
+    smtp_from: str = "noreply@asr-quechua.com"
+    frontend_url: str = "http://localhost:4200"
+
     class Config:
         env_file = ".env"
 
