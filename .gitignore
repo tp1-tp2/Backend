@@ -36,4 +36,3 @@ models/
 # Secrets
 .env.*
 secrets/
-DEPLOY.md
