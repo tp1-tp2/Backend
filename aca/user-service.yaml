@@ -37,7 +37,7 @@ properties:
           - name: SMTP_FROM
             value: CHANGE_ME
           - name: FRONTEND_URL
-            value: CHANGE_ME
+            value: https://asr-quechua-frontend-b722a.web.app
     scale:
       minReplicas: 1
       maxReplicas: 1
