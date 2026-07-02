@@ -13,6 +13,13 @@ class Settings(BaseSettings):
 
     request_timeout: int = 30
 
+    allowed_origins: list[str] = [
+        "http://localhost:4200",
+        "http://localhost:4201",
+        "https://asr-quechua-frontend-b722a.web.app",
+        "https://asr-quechua-frontend-b722a.firebaseapp.com",
+    ]
+
     class Config:
         env_file = ".env"
 
