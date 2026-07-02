@@ -11,10 +11,10 @@ _SUPPORTED = {"txt", "json", "srt"}
 
 
 def _srt_time(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int((seconds % 1) * 1000)
+    total_ms = round(seconds * 1000)
+    h, remainder_ms = divmod(total_ms, 3_600_000)
+    m, remainder_ms = divmod(remainder_ms, 60_000)
+    s, ms = divmod(remainder_ms, 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 

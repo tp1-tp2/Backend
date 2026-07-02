@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 
 class AudioMetadata(BaseModel):
     format: str
-    duration: float = Field(..., ge=0.0, le=3600.0)
-    sample_rate: int = Field(..., ge=8000, le=48000, alias="sampleRate")
+    duration: float
+    sample_rate: int = Field(..., alias="sampleRate")
     bit_rate: int = Field(..., alias="bitRate")
     channels: int = Field(..., ge=1, le=2)
     codec: Optional[str] = None

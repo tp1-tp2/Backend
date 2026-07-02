@@ -105,7 +105,7 @@ def test_write_wav_produces_valid_header():
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = tmp.name
     try:
-        _write_wav(tmp_path, pcm)
+        _write_wav(tmp_path, pcm, 16000)
         with open(tmp_path, "rb") as f:
             header = f.read(44)
         assert header[:4] == b"RIFF"

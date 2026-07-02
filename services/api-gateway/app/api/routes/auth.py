@@ -70,10 +70,11 @@ async def password_recovery(
     await _post(http, f"{settings.auth_service_url}/api/v1/auth/password-recovery", json=body)
 
 
-@router.post("/api/v1/auth/password-reset", status_code=204)
+@router.post("/api/v1/auth/password-reset")
 async def password_reset(
     request: Request,
     http: httpx.AsyncClient = Depends(get_http_client),
 ):
     body = await request.json()
-    await _post(http, f"{settings.auth_service_url}/api/v1/auth/password-reset", json=body)
+    resp = await _post(http, f"{settings.auth_service_url}/api/v1/auth/password-reset", json=body)
+    return _fwd(resp)

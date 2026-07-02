@@ -22,7 +22,7 @@ def _mock_result(text: str = "Imaynallan kashanki") -> dict:
 
 
 async def test_transcribe_raises_when_model_not_loaded():
-    with patch.object(whisper_service, "_model", None):
+    with patch.object(whisper_service, "_pipe", None):
         with pytest.raises(ModelUnavailableError):
             await whisper_service.transcribe(
                 audio_path="/tmp/audio.wav",
@@ -35,7 +35,7 @@ async def test_transcribe_raises_when_model_not_loaded():
 
 async def test_transcribe_returns_response():
     with (
-        patch.object(whisper_service, "_model", MagicMock()),
+        patch.object(whisper_service, "_pipe", MagicMock()),
         patch.object(whisper_service, "_run_whisper", return_value=_mock_result()),
         patch("app.services.whisper_service.httpx.AsyncClient") as mock_client_cls,
     ):
@@ -62,7 +62,7 @@ async def test_transcribe_returns_response():
 async def test_transcribe_empty_audio_returns_empty_text():
     empty_result = {"text": "", "segments": []}
     with (
-        patch.object(whisper_service, "_model", MagicMock()),
+        patch.object(whisper_service, "_pipe", MagicMock()),
         patch.object(whisper_service, "_run_whisper", return_value=empty_result),
         patch("app.services.whisper_service.httpx.AsyncClient") as mock_client_cls,
     ):
@@ -91,7 +91,7 @@ async def test_transcribe_timeout_raises():
         await asyncio.sleep(999)
 
     with (
-        patch.object(whisper_service, "_model", MagicMock()),
+        patch.object(whisper_service, "_pipe", MagicMock()),
         patch(
             "asyncio.get_event_loop",
             return_value=MagicMock(
