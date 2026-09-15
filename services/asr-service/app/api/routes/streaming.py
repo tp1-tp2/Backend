@@ -42,7 +42,12 @@ def _error(code: str, message: str) -> str:
 
 
 @router.websocket("/ws/stream")
-async def stream(websocket: WebSocket, token: str = Query(...), sample_rate: int = Query(16000)):
+async def stream(
+    websocket: WebSocket,
+    token: str = Query(...),
+    sample_rate: int = Query(16000),
+    encoding: str = Query("pcm"),
+):
     await websocket.accept()
 
     # 1. Validate JWT
@@ -56,7 +61,7 @@ async def stream(websocket: WebSocket, token: str = Query(...), sample_rate: int
 
     # 2. Check capacity + create session
     try:
-        session_id = await manager.connect(user_id, sample_rate)
+        session_id = await manager.connect(user_id, sample_rate, encoding)
     except CapacityReachedError:
         await websocket.send_text(_error("ASR_003", "Service capacity limit reached"))
         await websocket.close(code=1013)

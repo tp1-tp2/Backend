@@ -1,0 +1,3 @@
+audio_path,reference_text,speaker,sex,age,dialect,source,condition
+clips/clip001.wav,"allinllachu turiy",spk01,M,34,Cusco-Collao,siminchik,studio
+clips/clip002.wav,"imaynalla kachkanki",spk02,F,28,Ayacucho-Chanka,ad-hoc,field

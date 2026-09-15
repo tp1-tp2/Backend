@@ -24,7 +24,12 @@ async def _validate_token(token: str) -> bool:
 
 
 @router.websocket("/ws/stream")
-async def ws_proxy(websocket: WebSocket, token: str = Query(...), sample_rate: int = Query(16000)):
+async def ws_proxy(
+    websocket: WebSocket,
+    token: str = Query(...),
+    sample_rate: int = Query(16000),
+    encoding: str = Query("pcm"),
+):
     if not await _validate_token(token):
         await websocket.close(code=1008)
         return
@@ -33,7 +38,7 @@ async def ws_proxy(websocket: WebSocket, token: str = Query(...), sample_rate: i
 
     asr_ws_url = (
         settings.asr_service_url.replace("http://", "ws://").replace("https://", "wss://")
-        + f"/ws/stream?token={token}&sample_rate={sample_rate}"
+        + f"/ws/stream?token={token}&sample_rate={sample_rate}&encoding={encoding}"
     )
 
     try:

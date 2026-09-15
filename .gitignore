@@ -37,3 +37,9 @@ env/
 # Secrets
 .env.*
 secrets/
+
+# experiments/ raw results
+experiments/results/*
+!experiments/results/.gitkeep
+experiments/.venv/
+CLAUDE.md

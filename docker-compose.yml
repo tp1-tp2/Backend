@@ -119,6 +119,10 @@ services:
       - HF_HUB_DISABLE_IMPLICIT_TOKEN=1
       - AUTH_SERVICE_URL=http://auth-service:8000
       - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8000
+      - DEVICE=${DEVICE:-cpu}
+      - ADAPTIVE_MODE=${ADAPTIVE_MODE:-true}
+      - FORCE_DEVICE=${FORCE_DEVICE:-}
+      - FORCE_COMPUTE_TYPE=${FORCE_COMPUTE_TYPE:-}
     volumes:
       - asr_audio:/tmp/asr_audio
     mem_limit: 4g
@@ -151,6 +155,37 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
+    restart: on-failure
+
+  # ── MONOLITH BASELINE (E3 experimental control) ────────────────────────────
+  # Single process/container: auth + audio validation + ASR + persistence,
+  # fixed device, no separation of concerns, no runtime adaptation. Run twice
+  # (DEVICE=cpu and DEVICE=cuda, rebuild between runs) for symmetric baselines
+  # against asr-service's adaptive runs. See docs/02-monolith-baseline.md.
+  monolith-baseline:
+    build: ./services/monolith-baseline
+    ports:
+      - "8006:8000"
+    environment:
+      - SERVICE_NAME=monolith-baseline
+      - DATABASE_URL=postgresql+asyncpg://monolith_user:monolith_pass@monolith-db:5432/monolith_db
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-changeme_in_production}
+      - MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned
+      - DEVICE=${MONOLITH_DEVICE:-cpu}
+      - HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+    volumes:
+      - monolith_audio:/tmp/asr_audio
+    mem_limit: 4g
+    memswap_limit: 4g
+    depends_on:
+      monolith-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 120s
     restart: on-failure
 
   # ── BASES DE DATOS ───────────────────────────────────────────────────────────
@@ -210,9 +245,25 @@ services:
       timeout: 5s
       retries: 10
 
+  monolith-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: monolith_user
+      POSTGRES_PASSWORD: monolith_pass
+      POSTGRES_DB: monolith_db
+    volumes:
+      - monolith_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monolith_user -d monolith_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   auth_db_data:
   user_db_data:
   audio_db_data:
   trans_db_data:
   asr_audio:
+  monolith_db_data:
+  monolith_audio:

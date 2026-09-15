@@ -2,12 +2,14 @@
 # FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
 FROM python:3.11-slim AS builder
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 && rm -rf /var/lib/apt/lists/*
+# libsndfile1: Whisper audio decode. ffmpeg: Opus/MP3 -> WAV decode for the
+# E5 compressed-streaming path (codec_service.py), mirrors audio-processor's Dockerfile.
+RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 
 FROM python:3.11-slim
-RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /root/.local /root/.local
 COPY . .

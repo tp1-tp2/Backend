@@ -1,5 +1,10 @@
 # ASR Quechua — Azure Container Apps Deployment
 
+> **Nota**: `monolith-baseline` (control experimental para E3) y `experiments/`
+> (herramientas de medición E1-E7) son **solo para uso local** — corren vía
+> `docker compose`, no se despliegan a Azure. Ver `docs/02-monolith-baseline.md`
+> y `experiments/README.md`.
+
 ## Infrastructure
 
 | Resource | Value |

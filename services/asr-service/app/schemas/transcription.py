@@ -27,6 +27,8 @@ class TranscribeResponse(BaseModel):
     confidence_scores: list[WordConfidenceSchema] = []
     processing_time: float
     audio_duration: float = 0.0
+    device_used: str = "cpu"
+    compute_type: str = "fp32"
 
 
 # ---------- WebSocket streaming messages ----------
@@ -51,6 +53,8 @@ class FinalResultMessage(BaseModel):
     text: str
     confidence_scores: list[WordConfidenceSchema] = []
     duration: float = 0.0
+    device_used: str = "cpu"
+    compute_type: str = "fp32"
     timestamp: datetime
 
 
@@ -76,5 +80,9 @@ class StreamingSession(BaseModel):
     started_at: datetime
     last_activity_at: datetime
     sample_rate: int = 16000
+    # "pcm" (default, raw 16-bit mono — what the real frontend sends) or a
+    # compressed format ("opus"/"mp3") used only by the E5 experiment to
+    # measure the streaming hallucination claim. See codec_service.py.
+    encoding: str = "pcm"
     audio_buffer: list[AudioChunk] = []
     partial_transcriptions: list[PartialResultMessage] = []

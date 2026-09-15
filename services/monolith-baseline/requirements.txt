@@ -1,0 +1,16 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic[email]==2.9.2
+pydantic-settings==2.5.2
+sqlalchemy==2.0.35
+asyncpg==0.29.0
+alembic==1.13.3
+pyjwt==2.9.0
+bcrypt==4.2.0
+# Install torch separately with CUDA support for GPU:
+# pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121
+torch==2.4.1
+transformers>=4.40.0
+accelerate>=0.26.0
+soundfile==0.12.1
+python-multipart==0.0.12

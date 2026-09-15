@@ -69,6 +69,8 @@ class TranscriptionRepository:
         audio_duration: Decimal,
         processing_time: Decimal,
         word_confidences: list[WordConfidence] | None = None,
+        device_used: str = "cpu",
+        compute_type: str = "fp32",
     ) -> Transcription:
         entry = Transcription(
             transcription_id=transcription_id,
@@ -79,6 +81,8 @@ class TranscriptionRepository:
             audio_duration=audio_duration,
             processing_time=processing_time,
             created_at=datetime.now(timezone.utc),
+            device_used=device_used,
+            compute_type=compute_type,
         )
         if word_confidences:
             entry.word_confidences = word_confidences

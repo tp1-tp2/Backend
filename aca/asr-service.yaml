@@ -20,6 +20,8 @@ properties:
             value: QuechuaBase/whisper-base-qxp-finetuned
           - name: DEVICE
             value: cpu
+          - name: ADAPTIVE_MODE
+            value: "true"
           - name: AUTH_SERVICE_URL
             value: http://auth-service
           - name: TRANSCRIPTION_MANAGER_URL

@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import threading
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 import httpx
 
@@ -12,32 +14,112 @@ from app.schemas.transcription import TranscribeResponse, WordConfidenceSchema
 logger = logging.getLogger(__name__)
 
 _pipe = None
+_tokenizer = None
+_current_device = settings.device
+_current_compute_type = "fp32"
+# Guards the _pipe/_current_* pointer swap only — never held during model
+# construction, so a reload never blocks in-flight inference. See
+# docs/01-adaptive-mechanism.md for the build-then-swap rationale.
+_swap_lock = threading.Lock()
 
 
-def load_model():
-    """Load the fine-tuned Quechua Whisper model via transformers pipeline."""
+def _device_index(device: str) -> int:
+    return 0 if device == "cuda" else -1  # transformers: 0=first GPU, -1=CPU
+
+
+def _build_pipe(device: str, compute_type: str):
+    """Blocking. Builds a fresh pipeline for (device, compute_type). Does NOT
+    touch the module globals — the caller swaps them in atomically.
+    """
     import logging as _logging
-    from transformers import pipeline, WhisperTokenizer
-    global _pipe
+
+    import torch
+    from transformers import WhisperTokenizer, pipeline
+
+    global _tokenizer
     # Suppress cosmetic BPE tokenization and logits processor warnings
     _logging.getLogger("transformers").setLevel(_logging.ERROR)
-    device = 0 if settings.device == "cuda" else -1  # transformers: 0=first GPU, -1=CPU
-    logger.info("Loading model '%s' on device '%s'", settings.model_id, settings.device)
-    tokenizer = WhisperTokenizer.from_pretrained(
-        settings.model_id, clean_up_tokenization_spaces=False
+
+    if _tokenizer is None:
+        _tokenizer = WhisperTokenizer.from_pretrained(
+            settings.model_id, clean_up_tokenization_spaces=False
+        )
+
+    torch_dtype = torch.float16 if compute_type == "fp16" else torch.float32
+    logger.info(
+        "Building model '%s' on device=%s compute_type=%s", settings.model_id, device, compute_type
     )
-    _pipe = pipeline(
+    pipe = pipeline(
         "automatic-speech-recognition",
         model=settings.model_id,
-        tokenizer=tokenizer,
-        device=device,
+        tokenizer=_tokenizer,
+        device=_device_index(device),
+        torch_dtype=torch_dtype,
     )
-    logger.info("Model loaded successfully")
-    return _pipe
+
+    if compute_type == "int8":
+        if device != "cpu":
+            logger.warning(
+                "int8 dynamic quantization only applies on CPU, ignoring for device=%s", device
+            )
+        else:
+            pipe.model = torch.quantization.quantize_dynamic(
+                pipe.model, {torch.nn.Linear}, dtype=torch.qint8
+            )
+
+    return pipe
+
+
+def load_model(device: Optional[str] = None, compute_type: Optional[str] = None):
+    """Load the model for the first time. Called once at process startup from
+    main.py's lifespan. Subsequent runtime swaps go through reload_model(),
+    called by device_manager.DeviceManager — not this function.
+    """
+    global _pipe, _current_device, _current_compute_type
+    device = device or settings.device
+    compute_type = compute_type or (settings.force_compute_type or "fp32")
+    pipe = _build_pipe(device, compute_type)
+    with _swap_lock:
+        _pipe = pipe
+        _current_device = device
+        _current_compute_type = compute_type
+    logger.info("Model loaded successfully (device=%s, compute_type=%s)", device, compute_type)
+    return pipe
+
+
+def reload_model(device: str, compute_type: str) -> None:
+    """Build a new pipeline off the request hot path, then atomically swap it
+    in. Blocking — call via run_in_executor. Any in-flight _run_whisper() call
+    keeps using the pipe reference it already captured, unaffected by the swap.
+    """
+    global _pipe, _current_device, _current_compute_type
+    new_pipe = _build_pipe(device, compute_type)
+    with _swap_lock:
+        old_pipe = _pipe
+        _pipe = new_pipe
+        _current_device = device
+        _current_compute_type = compute_type
+    del old_pipe
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    logger.info("Model swapped to device=%s compute_type=%s", device, compute_type)
 
 
 def is_loaded() -> bool:
     return _pipe is not None
+
+
+def get_current_device() -> str:
+    return _current_device
+
+
+def get_current_compute_type() -> str:
+    return _current_compute_type
 
 
 def _run_whisper(audio_path: str) -> dict:
@@ -47,6 +129,10 @@ def _run_whisper(audio_path: str) -> dict:
     with streaming_service.py and _extract_words().
     """
     import soundfile as sf
+
+    with _swap_lock:
+        pipe = _pipe  # snapshot the current pipe; unaffected by a concurrent reload
+
     audio_array, sample_rate = sf.read(audio_path, dtype="float32")
     # return_timestamps=True gives segment-level timestamps from the generated
     # special tokens directly. return_timestamps="word" forces transformers to
@@ -58,7 +144,7 @@ def _run_whisper(audio_path: str) -> dict:
     # Quechua token in Whisper's vocabulary). Without forcing it explicitly here,
     # the pipeline runs language auto-detection, which hallucinates into unrelated
     # languages (observed: Japanese) on ambiguous/quiet audio.
-    result = _pipe(
+    result = pipe(
         {"array": audio_array, "sampling_rate": sample_rate},
         return_timestamps=True,
         generate_kwargs={
@@ -123,12 +209,15 @@ async def transcribe(
     if not is_loaded():
         raise ModelUnavailableError()
 
+    from app.services.device_manager import manager as device_manager
+
     loop = asyncio.get_event_loop()
     # CPU inference with transformers can take 60-180s on first call (warm-up).
     # Keep well below the audio-processor's 300s caller timeout.
     timeout = max(250.0, audio_duration * 15.0)
     t0 = datetime.now(timezone.utc)
 
+    device_manager.inference_started()
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(None, _run_whisper, audio_path),
@@ -136,6 +225,13 @@ async def transcribe(
         )
     except asyncio.TimeoutError:
         raise TranscriptionTimeoutError()
+    finally:
+        device_manager.inference_finished()
+
+    # Stamp with whatever actually ran this inference (grabbed after it ran, so
+    # it reflects the real pipe used, not a stale pre-call read).
+    device_used = get_current_device()
+    compute_type = get_current_compute_type()
 
     processing_time = (datetime.now(timezone.utc) - t0).total_seconds()
     text = (result.get("text") or "").strip()
@@ -155,7 +251,13 @@ async def transcribe(
                     "audio_filename": audio_filename,
                     "audio_duration": audio_duration,
                     "processing_time": processing_time,
-                    "word_confidences": [w.model_dump() for w in words],
+                    # NOTE: this key previously said "word_confidences", which does not
+                    # match CreateTranscriptionRequest.confidence_scores in
+                    # transcription-manager — pydantic silently dropped it, so per-word
+                    # confidences were never actually persisted. Fixed here.
+                    "confidence_scores": [w.model_dump() for w in words],
+                    "device_used": device_used,
+                    "compute_type": compute_type,
                 },
             )
     except Exception as exc:
@@ -167,4 +269,6 @@ async def transcribe(
         confidence_scores=words,
         processing_time=processing_time,
         audio_duration=audio_duration,
+        device_used=device_used,
+        compute_type=compute_type,
     )

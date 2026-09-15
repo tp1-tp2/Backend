@@ -13,12 +13,17 @@ from app.schemas.transcription import (
     PartialResultMessage,
     StreamingSession,
 )
-from app.services import whisper_service
+from app.services import codec_service, whisper_service
 
 logger = logging.getLogger(__name__)
 
 # 16-bit mono PCM: 2 bytes per sample, regardless of sample rate
 _BYTES_PER_SAMPLE = 2
+# Flat safety cap for compressed (non-PCM) buffers, since a byte-rate-based
+# trim (like the PCM path uses) doesn't map cleanly to seconds of audio for
+# Opus/MP3. Generous enough for the short clips E5 streams; not meant for
+# long production sessions — compressed streaming is an experimental-only path.
+_MAX_COMPRESSED_BYTES = 50 * 1024 * 1024
 
 
 def _write_wav(path: str, pcm_data: bytes, sample_rate: int) -> None:
@@ -52,7 +57,7 @@ class ConnectionManager:
     def connection_count(self) -> int:
         return len(self._sessions)
 
-    async def connect(self, user_id: str, sample_rate: int = 16000) -> str:
+    async def connect(self, user_id: str, sample_rate: int = 16000, encoding: str = "pcm") -> str:
         async with self._lock:
             if self.connection_count >= settings.max_concurrent_connections:
                 raise CapacityReachedError()
@@ -64,6 +69,7 @@ class ConnectionManager:
                 started_at=now,
                 last_activity_at=now,
                 sample_rate=sample_rate,
+                encoding=encoding,
             )
             self._buffers[session_id] = bytearray()
             self._partial_buffers[session_id] = bytearray()
@@ -83,16 +89,29 @@ class ConnectionManager:
         return sample_rate * _BYTES_PER_SAMPLE
 
     def append_chunk(self, session_id: str, data: bytes) -> None:
-        bytes_per_second = self._bytes_per_second(session_id)
+        session = self._sessions.get(session_id)
+        is_pcm = session is None or session.encoding == "pcm"
+
         if session_id in self._buffers:
-            max_bytes = settings.audio_buffer_max_seconds * bytes_per_second
             buf = self._buffers[session_id]
             buf.extend(data)
-            # Trim to max window — keep the most recent audio. This buffer feeds
-            # finalize(), so it keeps the full session context.
-            if len(buf) > max_bytes:
-                del buf[: len(buf) - max_bytes]
-        if session_id in self._partial_buffers:
+            if is_pcm:
+                # Trim to max window — keep the most recent audio. This buffer
+                # feeds finalize(), so it keeps the full session context.
+                max_bytes = settings.audio_buffer_max_seconds * self._bytes_per_second(session_id)
+                if len(buf) > max_bytes:
+                    del buf[: len(buf) - max_bytes]
+            else:
+                # Compressed formats: byte count doesn't map to seconds of audio,
+                # so trim on a flat size cap instead (see _MAX_COMPRESSED_BYTES).
+                if len(buf) > _MAX_COMPRESSED_BYTES:
+                    del buf[: len(buf) - _MAX_COMPRESSED_BYTES]
+
+        # Partial (live) transcription only supports PCM — arbitrary mid-stream
+        # slicing of Opus/MP3 isn't reliably decodable, and E5 only needs the
+        # final WER/CER/latency/size comparison, not live partials.
+        if is_pcm and session_id in self._partial_buffers:
+            bytes_per_second = self._bytes_per_second(session_id)
             partial_max_bytes = settings.partial_window_seconds * bytes_per_second
             pbuf = self._partial_buffers[session_id]
             pbuf.extend(data)
@@ -100,6 +119,7 @@ class ConnectionManager:
             # every tick, so keeping it small keeps partials near real-time.
             if len(pbuf) > partial_max_bytes:
                 del pbuf[: len(pbuf) - partial_max_bytes]
+
         if session_id in self._sessions:
             self._sessions[session_id].last_activity_at = datetime.now(timezone.utc)
 
@@ -163,14 +183,29 @@ class ConnectionManager:
             else 60.0
         )
 
+        encoding = session.encoding if session else "pcm"
         tmp_path = tempfile.mktemp(suffix=".wav")
+        raw_tmp_path = None
         try:
-            _write_wav(tmp_path, buf, session.sample_rate if session else 16000)
+            if encoding == "pcm":
+                _write_wav(tmp_path, buf, session.sample_rate if session else 16000)
+            else:
+                # Write the accumulated compressed bytes to disk, then decode
+                # via ffmpeg (codec_service) to the same WAV path whisper_service
+                # expects — the E5 experiment path only, see docs/04-streaming-codec.md.
+                raw_tmp_path = tempfile.mktemp(suffix=f".{encoding}")
+                with open(raw_tmp_path, "wb") as f:
+                    f.write(buf)
+                ok = await codec_service.decode_to_wav(raw_tmp_path, tmp_path)
+                if not ok:
+                    logger.error("Codec decode failed for session=%s encoding=%s", session_id, encoding)
+                    return None
+
             result = await whisper_service.transcribe(
                 audio_path=tmp_path,
                 user_id=user_id,
                 audio_id=audio_id or str(uuid.uuid4()),
-                audio_filename="stream.wav",
+                audio_filename=f"stream.{encoding if encoding != 'pcm' else 'wav'}",
                 audio_duration=duration,
             )
         except Exception as exc:
@@ -179,6 +214,8 @@ class ConnectionManager:
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
+            if raw_tmp_path and os.path.exists(raw_tmp_path):
+                os.unlink(raw_tmp_path)
 
         return FinalResultMessage(
             type="final",
@@ -186,6 +223,8 @@ class ConnectionManager:
             text=result.text,
             confidence_scores=result.confidence_scores,
             duration=result.audio_duration,
+            device_used=result.device_used,
+            compute_type=result.compute_type,
             timestamp=datetime.now(timezone.utc),
         )
 

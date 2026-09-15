@@ -31,6 +31,8 @@ def _to_response(t: Transcription) -> TranscriptionResponse:
         confidence_scores=[
             WordConfidenceSchema.model_validate(w) for w in (t.word_confidences or [])
         ],
+        device_used=t.device_used,
+        compute_type=t.compute_type,
     )
 
 
@@ -50,6 +52,8 @@ class TranscriptionService:
             audio_filename=req.audio_filename,
             audio_duration=Decimal(str(req.audio_duration)),
             processing_time=Decimal(str(req.processing_time)),
+            device_used=req.device_used,
+            compute_type=req.compute_type,
         )
 
         if req.confidence_scores:

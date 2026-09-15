@@ -154,8 +154,9 @@ graph TD
 | **auth-service** | 8001 | Emisión de JWT (HS256), bcrypt, rate limiting, recuperación de contraseña |
 | **user-service** | 8002 | Registro, perfil de usuario, cambio de email |
 | **audio-processor** | 8003 | Validación de formato/tamaño, conversión con ffmpeg, reenvío a ASR |
-| **asr-service** | 8004 | Transcripción con `QuechuaBase/whisper-base-qxp-finetuned` (Puno Quechua), streaming WebSocket |
+| **asr-service** | 8004 | Transcripción con `QuechuaBase/whisper-base-qxp-finetuned` (Puno Quechua), streaming WebSocket, **adaptación de dispositivo/precisión en tiempo de ejecución** (ver `docs/01-adaptive-mechanism.md`) |
 | **transcription-manager** | 8005 | Historial paginado, descarga en TXT / JSON / SRT |
+| **monolith-baseline** | 8006 | Control experimental para E3: auth + audio + ASR + persistencia en un solo proceso, dispositivo fijo, sin adaptación (ver `docs/02-monolith-baseline.md`) |
 
 ---
 
@@ -442,13 +443,22 @@ Backend/
 │   │   └── alembic/
 │   │
 │   ├── asr-service/                # 🤖 Whisper + WebSocket streaming (puerto 8004)
-│   │   └── app/services/           # WhisperService, StreamingService
+│   │   └── app/services/           # WhisperService, StreamingService, DeviceManager, CodecService
 │   │
-│   └── transcription-manager/      # 📄 Historial y descarga (puerto 8005)
-│       ├── app/
-│       │   ├── models/             # Transcription, WordConfidence
-│       │   └── services/           # TranscriptionService, DownloadService
-│       └── alembic/
+│   ├── transcription-manager/      # 📄 Historial y descarga (puerto 8005)
+│   │   ├── app/
+│   │   │   ├── models/             # Transcription, WordConfidence
+│   │   │   └── services/           # TranscriptionService, DownloadService
+│   │   └── alembic/
+│   │
+│   └── monolith-baseline/          # 🧱 Control experimental E3 (puerto 8006)
+│       └── app/                    # auth + audio + ASR + persistencia en un solo proceso
+│
+├── experiments/                    # 🧪 Herramientas de medición E1-E7 (ver experiments/README.md)
+│   ├── common/                     # manifest, asr_client, stats, text_norm
+│   └── e1_.../ e2_.../ e4_.../ e5_.../ e6_.../ e7_.../
+│
+├── docs/                           # 📚 Documentación de diseño por fase (mecanismo adaptativo, monolito, etc.)
 │
 └── contexto/
     └── tasks.md                    # Backlog y trazabilidad de historias de usuario
@@ -521,9 +531,10 @@ Si la base de datos no está lista, el contenedor falla y Docker lo reinicia gra
 
 **Protocolo:**
 
-1. El cliente conecta a `ws://.../ws/stream?token=<jwt>&sample_rate=<hz>`.
+1. El cliente conecta a `ws://.../ws/stream?token=<jwt>&sample_rate=<hz>&encoding=<pcm|opus|mp3>`.
    - `sample_rate` es la frecuencia **real** del audio capturado (ej. `48000`, el nativo del `AudioContext` del navegador). Si se omite, el backend asume `16000`.
-   - **Importante:** el audio debe capturarse con la **Web Audio API** (`AudioContext` + `ScriptProcessorNode`/`AudioWorkletNode`) para obtener PCM crudo. `MediaRecorder` (con su codec por defecto, normalmente Opus/WebM comprimido) **no es compatible** — el backend interpreta los bytes recibidos como PCM 16-bit mono crudo, y datos comprimidos producen ruido/alucinaciones en la transcripción.
+   - `encoding` por defecto es `pcm` — es el único valor que usa el frontend real. `opus`/`mp3` existen **solo** para el experimento E5 (`experiments/e5_streaming_codec/`), que mide cuantitativamente si la compresión realmente induce alucinaciones (ver `docs/04-streaming-codec.md`). Con `encoding != pcm` no hay transcripciones parciales en vivo, solo resultado final.
+   - **Importante:** el audio debe capturarse con la **Web Audio API** (`AudioContext` + `ScriptProcessorNode`/`AudioWorkletNode`) para obtener PCM crudo. `MediaRecorder` (con su codec por defecto, normalmente Opus/WebM comprimido) **no es compatible** con `encoding=pcm` (el default) — el backend interpreta los bytes recibidos como PCM 16-bit mono crudo, y datos comprimidos sin declarar `encoding=opus` producen ruido/alucinaciones en la transcripción.
 2. El cliente envía **frames binarios**: PCM 16-bit mono crudo, a la frecuencia indicada en `sample_rate`.
 3. El servidor responde cada pocos segundos con un mensaje de texto parcial:
    ```json

@@ -24,6 +24,8 @@ class TranscriptionResponse(BaseModel):
     processing_time: float
     created_at: datetime
     confidence_scores: list[WordConfidenceSchema] = []
+    device_used: str = "cpu"
+    compute_type: str = "fp32"
 
     model_config = {"from_attributes": True}
 
@@ -65,6 +67,8 @@ class CreateTranscriptionRequest(BaseModel):
     audio_duration: float
     processing_time: float
     confidence_scores: list[WordConfidenceSchema] = []
+    device_used: str = "cpu"
+    compute_type: str = "fp32"
 
 
 class TranscriptionSummary(BaseModel):

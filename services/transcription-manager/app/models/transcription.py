@@ -18,6 +18,8 @@ class Transcription(Base):
     audio_duration: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     processing_time: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    device_used: Mapped[str] = mapped_column(String(16), nullable=False, server_default="cpu")
+    compute_type: Mapped[str] = mapped_column(String(16), nullable=False, server_default="fp32")
 
     word_confidences: Mapped[list["WordConfidence"]] = relationship(
         back_populates="transcription",
