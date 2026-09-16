@@ -42,4 +42,8 @@ secrets/
 experiments/results/*
 !experiments/results/.gitkeep
 experiments/.venv/
+
+# experiments/ generated manifest — has machine-specific absolute paths into
+# a local corpus copy, not something to commit. manifest.example.csv stays.
+experiments/e1_dataset_characterization/manifest.csv
 CLAUDE.md
