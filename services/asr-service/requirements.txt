@@ -5,8 +5,14 @@ pydantic-settings==2.5.2
 # Install torch separately with CUDA support for GPU:
 # pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121
 torch==2.4.1
-transformers>=4.40.0
-accelerate>=0.26.0
+# Pinned, not >=4.40.0 — an unpinned floor resolved to transformers 5.17.0,
+# which requires torch>=2.5 and silently disables PyTorch entirely against
+# torch==2.4.1 (pipeline() builds but never actually loads a model). Pinning
+# to a known torch==2.4.1-compatible 4.x release also avoids behavioral
+# drift across a major version jump in exactly the pipeline whose output
+# (WER/CER) this project measures in experiments/e2_wer_cer_rtf/.
+transformers==4.44.2
+accelerate==0.33.0
 soundfile==0.12.1
 psutil==6.0.0
 httpx==0.27.2

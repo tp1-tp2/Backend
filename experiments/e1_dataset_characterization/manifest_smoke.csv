@@ -1,0 +1,4 @@
+audio_path,reference_text,speaker,sex,age,dialect,source,condition
+E:\IWSLT2026_Quechua_data\que_spa_unconstrained\train\wav\quechua000000.wav,wañuchisunchu kay suwakunata,MANUEL,,,quechua sureño,"siminchik (IWSLT2026/que_spa_unconstrained, Cardenas et al. 2018)",radio
+E:\IWSLT2026_Quechua_data\que_spa_unconstrained\train\wav\quechua000001.wav,imaninkichikmi qamkuna,MANUEL,,,quechua sureño,"siminchik (IWSLT2026/que_spa_unconstrained, Cardenas et al. 2018)",radio
+E:\IWSLT2026_Quechua_data\que_spa_unconstrained\train\wav\quechua000002.wav,hatun urqukunapi kunturkunapas uyarirqan,MANUEL,,,quechua sureño,"siminchik (IWSLT2026/que_spa_unconstrained, Cardenas et al. 2018)",radio

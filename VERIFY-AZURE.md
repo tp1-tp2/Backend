@@ -2,19 +2,24 @@
 
 Este documento tiene dos partes:
 
-- **Parte 1** — la corres **tú** (dueño de `ghcr.io/zrodrigochirinos`): build + push de las 6 imágenes actualizadas con los cambios de las Fases 1-4 (mecanismo adaptativo, columnas `device_used`/`compute_type`, soporte de códecs en streaming).
-- **Parte 2** — se la pasas **a tu amigo**: despliegue completo en Azure Container Apps usando sus propios créditos, puro Azure CLI, listo para copiar y pegar. Solo necesita reemplazar 3 valores marcados `<CAMBIAR>`.
+- **Parte 1** (`ghcr.io/zrodrigochirinos`): build + push de las 6 imágenes actualizadas con los cambios de las Fases 1-4 (mecanismo adaptativo, columnas `device_used`/`compute_type`, soporte de códecs en streaming).
+- **Parte 2** : despliegue completo en Azure Container Apps usando sus propios créditos, puro Azure CLI, listo para copiar y pegar. Solo necesita reemplazar 3 valores marcados `<CAMBIAR>`.
 
-**Costo estimado para tu amigo**: ~$40-50/mes mientras esté arriba (ver `DEPLOY.md` de este mismo repo para cómo pausar/apagar sin perder datos). Azure Container Apps Consumption plan **no tiene GPU** — esto verifica que el mecanismo adaptativo funciona (arranca, expone `/status/adaptation`, persiste `device_used`/`compute_type`, y la rama de precisión CPU fp32↔int8 reacciona a presión de CPU), pero **no** la rama de conmutación CPU↔GPU (necesita hardware con GPU, que ya probaste localmente).
+**Costo estimado**: ~$40-50/mes mientras esté arriba (ver `DEPLOY.md` de este mismo repo para cómo pausar/apagar sin perder datos). Azure Container Apps Consumption plan **no tiene GPU** — esto verifica que el mecanismo adaptativo funciona (arranca, expone `/status/adaptation`, persiste `device_used`/`compute_type`, y la rama de precisión CPU fp32↔int8 reacciona a presión de CPU), pero **no** la rama de conmutación CPU↔GPU (necesita hardware con GPU, que ya probaste localmente).
 
 ---
 
-## Parte 1 — Build & push (tu terminal, PowerShell)
+## Parte 1 — Build & push ✅ YA CONFIRMADO (2026-09-20, con el fix de `transformers`)
+
+Las 6 imágenes en `ghcr.io/zrodrigochirinos/*:latest` están actualizadas **con el fix de `transformers==4.44.2`** (la confirmación anterior del 16/09 había quedado obsoleta — ver `docs/05-verification-log.md` para el detalle del bug). Verificado: `pip show transformers` dentro de la imagen de `asr-service` dice `4.44.2`, el digest local coincide con el del registro remoto (`sha256:9d09baf5...`), y el modelo Whisper carga y transcribe correctamente contra audio real. **No hace falta rebuildear ni repushear nada** — pasar directo a la Parte 2.
+
+<details>
+<summary>Comandos de build+push (solo si en el futuro vuelves a tocar código)</summary>
 
 ```powershell
-cd .....\GitHub\tp1-tp2\Backend
+cd .....
 
-$GHCR_TOKEN = "...."
+$GHCR_TOKEN = "tu_github_token_con_write_packages"
 $GHCR_USER  = "zrodrigochirinos"
 echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USER --password-stdin
 
@@ -25,9 +30,14 @@ foreach ($svc in $services) {
 }
 ```
 
-> `asr-service` ahora instala `ffmpeg` además de `libsndfile1` (Fase 4) y pesa un poco más — el build va a tardar más que antes por eso, no es un error.
+Verificación rápida después de repushear (no confiar solo en que terminó sin error):
 
-Confirma que las 6 imágenes siguen **públicas** en github.com/zrodrigochirinos → Packages (deberían seguirlo estando de la vez anterior, pero revisa por si acaso).
+```powershell
+docker run --rm ghcr.io/zrodrigochirinos/asr-service:latest sh -c "pip show transformers | findstr Version"
+# debe decir: Version: 4.44.2   (si dice 5.x, el pin no se aplicó)
+```
+
+</details>
 
 ---
 
@@ -59,7 +69,7 @@ $LOCATION  = "canadacentral"   # Azure for Students suele bloquear ACR/AKS/ACA e
 $DB_HOST   = "pg-asr-verify"   # debe ser único globalmente en Azure — si "pg-asr-verify" ya existe, agregar sufijo (ej. pg-asr-verify-01)
 $DB_PASS   = "<CAMBIAR: una contraseña fuerte para Postgres>"
 $JWT_SECRET = "<CAMBIAR: genera con: python -c 'import secrets; print(secrets.token_hex(32))'>"
-$GHCR_USER = "CAMBIAR"
+$GHCR_USER = "zrodrigochirinos"   # NO cambiar — ahí viven las imágenes públicas ya verificadas, no importa de quién sea la cuenta de Azure
 ```
 
 ### 2.3 · Resource group + ACA environment

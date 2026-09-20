@@ -10,7 +10,9 @@ bcrypt==4.2.0
 # Install torch separately with CUDA support for GPU:
 # pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121
 torch==2.4.1
-transformers>=4.40.0
-accelerate>=0.26.0
+# Pinned — see services/asr-service/requirements.txt for why (unpinned
+# transformers resolved to 5.17.0, incompatible with torch==2.4.1).
+transformers==4.44.2
+accelerate==0.33.0
 soundfile==0.12.1
 python-multipart==0.0.12

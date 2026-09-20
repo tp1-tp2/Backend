@@ -34,7 +34,7 @@ def test_health_ok():
 
 
 def test_register_login_roundtrip():
-    email = f"smoke-{uuid.uuid4().hex[:12]}@experiments.local"
+    email = f"smoke-{uuid.uuid4().hex[:12]}@example.com"  # example.com (RFC 2606); .local is rejected by pydantic[email]
     password = "SmokeTestPass123!"
 
     register_resp = httpx.post(

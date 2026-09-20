@@ -27,15 +27,28 @@ def _ws_base_url(base_url: str) -> str:
     return base_url.replace("http://", "ws://").replace("https://", "wss://")
 
 
+_ALREADY_REGISTERED_ERROR_CODES = {"VALIDATION_003", "USER_001"}  # user-service (real stack) vs. monolith-baseline
+
+
 def register(base_url: str, email: str, password: str, full_name: str) -> None:
-    """Idempotent-ish: a 409 (already registered) is treated as success."""
+    """Idempotent-ish: "already registered" is treated as success. The real
+    stack's user-service returns 400 + errorCode VALIDATION_003 for this (not
+    409, as originally assumed here — caught by running this against a live
+    stack); monolith-baseline's EmailAlreadyExistsError returns 409 + USER_001.
+    Both are accepted.
+    """
     resp = httpx.post(
         f"{base_url}/api/v1/auth/register",
         json={"email": email, "password": password, "full_name": full_name},
         timeout=30,
     )
-    if resp.status_code not in (200, 201, 409):
-        resp.raise_for_status()
+    if resp.status_code in (200, 201):
+        return
+    if resp.status_code in (400, 409):
+        error_code = (resp.json().get("detail") or {}).get("errorCode")
+        if error_code in _ALREADY_REGISTERED_ERROR_CODES:
+            return
+    resp.raise_for_status()
 
 
 def login(base_url: str, email: str, password: str) -> str:
@@ -50,8 +63,18 @@ def ensure_user(base_url: str, email: str, password: str, full_name: str = "Expe
 
 
 def transcribe_file(base_url: str, token: str, audio_path: str, timeout: float = 300.0) -> dict:
-    """POST /api/v1/transcribe. Returns the response JSON plus a wall_time_s
-    field measuring end-to-end request latency (E2's RTF numerator).
+    """POST /api/v1/transcribe, then normalize the result to always have
+    text/processing_time/audio_duration/device_used/compute_type (+ wall_time_s,
+    E2's RTF numerator).
+
+    The two architectures answer this endpoint differently:
+    - monolith-baseline (Phase 2) returns the full enriched shape directly
+      (text, processing_time, device_used, compute_type all present).
+    - the real stack's gateway proxies audio-processor's AudioUploadResponse
+      instead (transcription_text, no processing_time/device_used/compute_type
+      at all — those live in transcription-manager). Caught by actually running
+      this against a live stack, not by reading the schemas — a GET to
+      /api/v1/transcriptions/{id} is needed to fetch the enriched record.
     """
     path = Path(audio_path)
     t0 = time.perf_counter()
@@ -65,6 +88,17 @@ def transcribe_file(base_url: str, token: str, audio_path: str, timeout: float =
     wall_time_s = time.perf_counter() - t0
     resp.raise_for_status()
     data = resp.json()
+
+    if "processing_time" not in data:
+        transcription_id = data.get("transcription_id")
+        detail_resp = httpx.get(
+            f"{base_url}/api/v1/transcriptions/{transcription_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        detail_resp.raise_for_status()
+        data = detail_resp.json()
+
     data["wall_time_s"] = wall_time_s
     return data
 
@@ -165,4 +199,6 @@ def get_adaptation_status(asr_base_url: str) -> dict:
 
 
 def unique_test_email(prefix: str = "exp") -> str:
-    return f"{prefix}-{uuid.uuid4().hex[:12]}@experiments.local"
+    # example.com (RFC 2606) — not .local, which pydantic[email] rejects as a
+    # reserved/special-use TLD (caught by running this against a live stack).
+    return f"{prefix}-{uuid.uuid4().hex[:12]}@example.com"
