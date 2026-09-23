@@ -108,14 +108,17 @@ $SMTP_P   = "YOUR_APP_PASSWORD"
 $SMTP_F   = "YOUR_GMAIL"
 $FRONTEND = "https://asr-quechua-frontend-b722a.web.app"
 
-# auth-service (internal)
+# auth-service (internal) — autoscaling: api-gateway calls validate-token
+# synchronously on every authenticated request, so this is in the critical
+# path for ALL traffic (see docs/06-horizontal-autoscaling.md)
 az containerapp create `
   --name auth-service `
   --resource-group $RG `
   --environment $ENV `
   --image ghcr.io/zrodrigochirinos/auth-service:latest `
   --cpu 0.5 --memory 1Gi `
-  --min-replicas 1 --max-replicas 1 `
+  --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency --scale-rule-type http --scale-rule-metadata concurrentRequests=10 `
   --ingress internal --target-port 8000 `
   --env-vars `
     "DATABASE_URL=postgresql+asyncpg://pgadmin:${DB_PASS}@${DB_HOST}/auth_db?ssl=require" `
@@ -155,43 +158,57 @@ az containerapp create `
     "SMTP_FROM=${SMTP_F}" `
     "FRONTEND_URL=${FRONTEND}"
 
-# transcription-manager (internal)
+# transcription-manager (internal) — autoscaling: asr-service awaits this
+# call synchronously before responding to the client (see docs/06-horizontal-autoscaling.md)
 az containerapp create `
   --name transcription-manager `
   --resource-group $RG `
   --environment $ENV `
   --image ghcr.io/zrodrigochirinos/transcription-manager:latest `
   --cpu 0.5 --memory 1Gi `
-  --min-replicas 1 --max-replicas 1 `
+  --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency --scale-rule-type http --scale-rule-metadata concurrentRequests=10 `
   --ingress internal --target-port 8000 `
   --env-vars `
     "DATABASE_URL=postgresql+asyncpg://pgadmin:${DB_PASS}@${DB_HOST}/trans_db?ssl=require"
 
-# audio-processor (internal)
+# audio-processor (internal) — autoscaling: in the critical path of every
+# /transcribe request (ffmpeg conversion before forwarding to asr-service)
 az containerapp create `
   --name audio-processor `
   --resource-group $RG `
   --environment $ENV `
   --image ghcr.io/zrodrigochirinos/audio-processor:latest `
   --cpu 0.5 --memory 1Gi `
-  --min-replicas 1 --max-replicas 1 `
+  --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency --scale-rule-type http --scale-rule-metadata concurrentRequests=10 `
   --ingress internal --target-port 8000 `
   --env-vars `
     "DATABASE_URL=postgresql+asyncpg://pgadmin:${DB_PASS}@${DB_HOST}/audio_db?ssl=require" `
     "ASR_SERVICE_URL=http://asr-service"
 
 # asr-service (internal, high CPU/RAM for model)
+# --min/max-replicas + --scale-rule-*: horizontal autoscaling, complementing
+# device_manager.py's vertical (in-process) adaptation — see
+# docs/06-horizontal-autoscaling.md. Trigger is HTTP concurrency, not CPU%,
+# because asr-service runs --workers 1 (module-global Whisper model) and each
+# real transcription holds that single worker for 1-3s+ — 2 concurrent
+# requests per replica is already a queue, not a CPU spike.
 az containerapp create `
   --name asr-service `
   --resource-group $RG `
   --environment $ENV `
   --image ghcr.io/zrodrigochirinos/asr-service:latest `
   --cpu 2.0 --memory 4Gi `
-  --min-replicas 1 --max-replicas 1 `
+  --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency `
+  --scale-rule-type http `
+  --scale-rule-metadata concurrentRequests=2 `
   --ingress internal --target-port 8000 `
   --env-vars `
     "MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned" `
     "DEVICE=cpu" `
+    "ADAPTIVE_MODE=true" `
     "AUTH_SERVICE_URL=http://auth-service" `
     "TRANSCRIPTION_MANAGER_URL=http://transcription-manager" `
     "MAX_CONCURRENT_CONNECTIONS=100" `
@@ -199,14 +216,16 @@ az containerapp create `
     "AUDIO_BUFFER_MAX_SECONDS=600" `
     "PARTIAL_WINDOW_SECONDS=10"
 
-# api-gateway (external — public internet)
+# api-gateway (external — public internet) — autoscaling: single public
+# entry point, 100% of traffic passes through it (see docs/06-horizontal-autoscaling.md)
 az containerapp create `
   --name api-gateway `
   --resource-group $RG `
   --environment $ENV `
   --image ghcr.io/zrodrigochirinos/api-gateway:latest `
   --cpu 0.5 --memory 1Gi `
-  --min-replicas 1 --max-replicas 1 `
+  --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency --scale-rule-type http --scale-rule-metadata concurrentRequests=10 `
   --ingress external --target-port 8000 `
   --env-vars `
     "AUTH_SERVICE_URL=http://auth-service" `

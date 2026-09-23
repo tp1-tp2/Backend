@@ -14,6 +14,7 @@ import argparse
 import statistics
 import subprocess
 import sys
+import wave
 from collections import Counter
 from pathlib import Path
 
@@ -22,6 +23,12 @@ from common.manifest import load  # noqa: E402
 
 
 def _duration_seconds(audio_path: str) -> float:
+    # manifest.csv is 100% .wav (IWSLT2026 corpora) — read the header directly
+    # with the stdlib wave module instead of shelling out to ffprobe, which
+    # isn't installed on this host outside the service Docker images.
+    if audio_path.lower().endswith(".wav"):
+        with wave.open(audio_path, "rb") as f:
+            return f.getnframes() / f.getframerate()
     out = subprocess.run(
         ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", audio_path],
         capture_output=True,

@@ -14,7 +14,19 @@ WORKDIR /app
 COPY --from=builder /root/.local /root/.local
 COPY . .
 ENV PATH=/root/.local/bin:$PATH
-# Mount HuggingFace model cache as volume in production to avoid re-downloading
-VOLUME ["/root/.cache/huggingface"]
+# Bake the model+tokenizer into the image at BUILD time instead of downloading
+# from HuggingFace Hub on every container start. The previous VOLUME-based
+# cache didn't actually persist across ACA replicas (each new replica —
+# including ones spun up by horizontal autoscaling, see
+# docs/06-horizontal-autoscaling.md — got a fresh empty volume), so every
+# scale-out event paid the full download+load cost before the replica could
+# pass its healthcheck. Baking it in trades slower image builds (happens
+# once) for faster container starts (happens on every scale-out — the
+# time-sensitive side of that tradeoff). Only fp32 needs baking: fp16 and the
+# int8 quantization device_manager.py can switch to are computed at load time
+# from these same cached files, not separately downloaded.
+ARG MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned
+ENV HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+RUN python -c "from transformers import WhisperTokenizer, pipeline; tok = WhisperTokenizer.from_pretrained('${MODEL_ID}', clean_up_tokenization_spaces=False); pipeline('automatic-speech-recognition', model='${MODEL_ID}', tokenizer=tok, device=-1)"
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

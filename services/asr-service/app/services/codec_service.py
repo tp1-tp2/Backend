@@ -21,7 +21,12 @@ async def decode_to_wav(input_path: str, output_path: str) -> bool:
     the given path via ffmpeg. Returns False on any failure — caller decides
     how to surface that (this mirrors convert_to_wav()'s contract exactly).
     """
-    cmd = [_FFMPEG, "-y", "-i", input_path, "-ac", "1", "-vn", output_path]
+    # -ar 16000: Opus (and MP3) commonly encode at 48kHz regardless of the
+    # source rate, and without resampling back down here, Whisper's pipeline
+    # needs torchaudio (not a dependency of this service) to do it at
+    # inference time — it fails closed, logs an error, and the caller sees a
+    # silent None finalize() result instead of a clear error.
+    cmd = [_FFMPEG, "-y", "-i", input_path, "-ac", "1", "-ar", "16000", "-vn", output_path]
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,

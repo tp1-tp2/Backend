@@ -36,6 +36,18 @@ properties:
             value: "10"
           - name: SERVICE_NAME
             value: asr-service
+    # Horizontal autoscaling, complementing device_manager.py's vertical
+    # (in-process) adaptation — see docs/06-horizontal-autoscaling.md.
+    # Trigger is HTTP concurrency, not CPU%, because asr-service runs
+    # --workers 1 (module-global Whisper model) and each real transcription
+    # holds that single worker for 1-3s+ — 2 concurrent requests per replica
+    # is already a queue, not a CPU spike, so CPU-based scaling would react
+    # too late.
     scale:
       minReplicas: 1
-      maxReplicas: 1
+      maxReplicas: 3
+      rules:
+        - name: http-concurrency
+          http:
+            metadata:
+              concurrentRequests: "2"

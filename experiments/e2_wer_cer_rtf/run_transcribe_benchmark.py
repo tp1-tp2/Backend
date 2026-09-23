@@ -29,7 +29,7 @@ from common.manifest import load  # noqa: E402
 from common.text_norm import normalize  # noqa: E402
 
 FIELDNAMES = [
-    "audio_path", "repeat_index", "wer", "cer", "rtf", "processing_time_s",
+    "audio_path", "source", "repeat_index", "wer", "cer", "rtf", "processing_time_s",
     "wall_time_s", "audio_duration_s", "device_used", "compute_type", "text",
 ]
 
@@ -69,6 +69,7 @@ def main() -> None:
 
                 writer.writerow({
                     "audio_path": row.audio_path,
+                    "source": row.source,
                     "repeat_index": repeat_index,
                     "wer": wer,
                     "cer": cer,

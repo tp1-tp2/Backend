@@ -46,6 +46,21 @@ properties:
             value: CHANGE_ME
           - name: FRONTEND_URL
             value: https://asr-quechua-frontend-b722a.web.app
+    # Horizontal autoscaling — added after E4 showed auth-service (fixed at
+    # 1 replica) becomes the real bottleneck under load: api-gateway calls
+    # POST /internal/auth/validate-token synchronously on every authenticated
+    # request (see services/api-gateway/app/api/dependencies.py), so this
+    # service is in the critical path for ALL traffic, not just auth
+    # endpoints. Threshold is higher than asr-service's (2) because
+    # auth-service runs --workers 4 (no module-global-model constraint) and
+    # validate-token does no bcrypt (that's login/register only) — each
+    # request is sub-100ms, so a replica can hold more concurrent requests
+    # before genuinely queueing. See docs/06-horizontal-autoscaling.md.
     scale:
       minReplicas: 1
-      maxReplicas: 1
+      maxReplicas: 3
+      rules:
+        - name: http-concurrency
+          http:
+            metadata:
+              concurrentRequests: "10"

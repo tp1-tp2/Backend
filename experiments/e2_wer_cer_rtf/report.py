@@ -53,6 +53,25 @@ def main() -> None:
     bucket_stats = df.groupby("duration_bucket", observed=True)["wer"].agg(["count", "mean"])
     lines.append(bucket_stats.to_markdown())
 
+    if "source" in df.columns:
+        lines += ["", "## WER / CER / RTF por fuente del corpus", ""]
+        source_stats = df.groupby("source", observed=True).agg(
+            n=("wer", "count"),
+            wer_median=("wer", "median"),
+            wer_mean=("wer", "mean"),
+            cer_median=("cer", "median"),
+            rtf_median=("rtf", "median"),
+        ).round(3)
+        lines.append(source_stats.to_markdown())
+        lines.append("")
+        lines.append(
+            f"- **Clips con WER > 1.5** (posible alucinación/inserción excesiva): {(df['wer'] > 1.5).sum()} "
+            f"({(df['wer'] > 1.5).mean():.1%})"
+        )
+        lines.append(f"- **Clips con WER = 0** (transcripción perfecta): {(df['wer'] == 0).sum()} ({(df['wer'] == 0).mean():.1%})")
+        empty_text = (df["text"].isna() | (df["text"] == "")).sum()
+        lines.append(f"- **Transcripciones vacías** (posible timeout/fallo silencioso): {empty_text}")
+
     output = "\n".join(lines)
     if args.out:
         Path(args.out).write_text(output, encoding="utf-8")

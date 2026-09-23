@@ -7,6 +7,8 @@ Este documento tiene dos partes:
 
 **Costo estimado**: ~$40-50/mes mientras esté arriba (ver `DEPLOY.md` de este mismo repo para cómo pausar/apagar sin perder datos). Azure Container Apps Consumption plan **no tiene GPU** — esto verifica que el mecanismo adaptativo funciona (arranca, expone `/status/adaptation`, persiste `device_used`/`compute_type`, y la rama de precisión CPU fp32↔int8 reacciona a presión de CPU), pero **no** la rama de conmutación CPU↔GPU (necesita hardware con GPU, que ya probaste localmente).
 
+> **✅ Verificado end-to-end en esta segunda cuenta (2026-09-20, región Central US)**: register → login → transcribir audio real → `device_used`/`compute_type` correctos, todo funcionando. Ver la nota sobre DNS interno más abajo (Parte 2, paso 2.5) si el registro falla con `502 upstream temporarily unavailable` — es un gotcha real de esta región/entorno, no un bug del código.
+
 ---
 
 ## Parte 1 — Build & push ✅ YA CONFIRMADO (2026-09-20, con el fix de `transformers`)
@@ -108,11 +110,16 @@ az postgres flexible-server db create --server-name $DB_HOST --resource-group $R
 ```powershell
 $DB_FQDN = "$DB_HOST.postgres.database.azure.com"
 
-# auth-service (interno)
+# auth-service (interno) — autoscaling: api-gateway llama a validate-token
+# sincrónicamente en CADA request autenticado, así que este servicio está en
+# el critical path de todo el tráfico, no solo de /auth (ver
+# docs/06-horizontal-autoscaling.md — agregado después de que E4 mostrara
+# que era el cuello de botella real, no asr-service)
 az containerapp create `
   --name auth-service --resource-group $RG --environment $ENV_NAME `
   --image "ghcr.io/$GHCR_USER/auth-service:latest" `
-  --cpu 0.5 --memory 1Gi --min-replicas 1 --max-replicas 1 `
+  --cpu 0.5 --memory 1Gi --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency --scale-rule-type http --scale-rule-metadata concurrentRequests=10 `
   --ingress internal --target-port 8000 `
   --env-vars `
     "DATABASE_URL=postgresql+asyncpg://pgadmin:${DB_PASS}@${DB_FQDN}/auth_db?ssl=require" `
@@ -136,29 +143,38 @@ az containerapp create `
     "SMTP_FROM=noreply@asr-quechua.com" "FRONTEND_URL=http://localhost:4200"
 
 # transcription-manager (interno) — tiene las columnas nuevas device_used/compute_type (Fase 1)
+# + autoscaling: asr-service espera este POST sincrónicamente antes de
+# responderle al cliente (ver docs/06-horizontal-autoscaling.md)
 az containerapp create `
   --name transcription-manager --resource-group $RG --environment $ENV_NAME `
   --image "ghcr.io/$GHCR_USER/transcription-manager:latest" `
-  --cpu 0.5 --memory 1Gi --min-replicas 1 --max-replicas 1 `
+  --cpu 0.5 --memory 1Gi --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency --scale-rule-type http --scale-rule-metadata concurrentRequests=10 `
   --ingress internal --target-port 8000 `
   --env-vars `
     "DATABASE_URL=postgresql+asyncpg://pgadmin:${DB_PASS}@${DB_FQDN}/trans_db?ssl=require"
 
-# audio-processor (interno)
+# audio-processor (interno) — autoscaling: está en el critical path de cada
+# /transcribe (conversión ffmpeg antes de reenviar a asr-service)
 az containerapp create `
   --name audio-processor --resource-group $RG --environment $ENV_NAME `
   --image "ghcr.io/$GHCR_USER/audio-processor:latest" `
-  --cpu 0.5 --memory 1Gi --min-replicas 1 --max-replicas 1 `
+  --cpu 0.5 --memory 1Gi --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency --scale-rule-type http --scale-rule-metadata concurrentRequests=10 `
   --ingress internal --target-port 8000 `
   --env-vars `
     "DATABASE_URL=postgresql+asyncpg://pgadmin:${DB_PASS}@${DB_FQDN}/audio_db?ssl=require" `
     "ASR_SERVICE_URL=http://asr-service"
 
 # asr-service (interno, 2 CPU / 4GB — Whisper) — mecanismo adaptativo de la Fase 1
+# + autoscaling horizontal por concurrencia HTTP (no CPU%, porque corre
+# --workers 1 y cada transcripción real ocupa ese único worker 1-3s+ —
+# ver docs/06-horizontal-autoscaling.md)
 az containerapp create `
   --name asr-service --resource-group $RG --environment $ENV_NAME `
   --image "ghcr.io/$GHCR_USER/asr-service:latest" `
-  --cpu 2.0 --memory 4Gi --min-replicas 1 --max-replicas 1 `
+  --cpu 2.0 --memory 4Gi --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency --scale-rule-type http --scale-rule-metadata concurrentRequests=2 `
   --ingress internal --target-port 8000 `
   --env-vars `
     "MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned" `
@@ -168,11 +184,13 @@ az containerapp create `
     "MAX_CONCURRENT_CONNECTIONS=100" "STREAMING_PARTIAL_INTERVAL_SECONDS=3" `
     "AUDIO_BUFFER_MAX_SECONDS=600" "PARTIAL_WINDOW_SECONDS=10"
 
-# api-gateway (externo — único con ingress público)
+# api-gateway (externo — único con ingress público) — autoscaling: único
+# punto de entrada, el 100% del tráfico pasa por acá (ver docs/06-horizontal-autoscaling.md)
 az containerapp create `
   --name api-gateway --resource-group $RG --environment $ENV_NAME `
   --image "ghcr.io/$GHCR_USER/api-gateway:latest" `
-  --cpu 0.5 --memory 1Gi --min-replicas 1 --max-replicas 1 `
+  --cpu 0.5 --memory 1Gi --min-replicas 1 --max-replicas 3 `
+  --scale-rule-name http-concurrency --scale-rule-type http --scale-rule-metadata concurrentRequests=10 `
   --ingress external --target-port 8000 `
   --env-vars `
     "AUTH_SERVICE_URL=http://auth-service" `
@@ -181,6 +199,14 @@ az containerapp create `
     "ASR_SERVICE_URL=http://asr-service" `
     "TRANSCRIPTION_MANAGER_URL=http://transcription-manager"
 ```
+
+> **⚠️ Gotcha conocido (visto en región Central US)**: en algunos entornos ACA, el DNS interno **no resuelve el nombre corto** (`http://auth-service`) entre contenedores — `api-gateway` (y cualquier servicio que llame a otro) falla con `502 upstream temporarily unavailable`, y por dentro del contenedor un `python -c "urllib.request.urlopen('http://auth-service/health')"` tira `socket.gaierror: Name or service not known`. La región original (Canada Central) nunca tuvo este problema; no se sabe si es por región, por versión del entorno, o algo específico de esa suscripción.
+>
+> **Si pasa esto**, reemplazar cada URL interna por el FQDN completo del servicio (mismo sufijo que la URL pública de `api-gateway`, ej. `https://auth-service.<mismo-sufijo-que-api-gateway>`) en vez del nombre corto, en los 4 servicios que llaman a otros (`api-gateway`, `user-service`, `audio-processor`, `asr-service` — `auth-service` y `transcription-manager` no llaman a nadie, no hace falta tocarlos). Conseguir el FQDN de cada uno con:
+> ```powershell
+> az containerapp show --name auth-service --resource-group $RG --query "properties.configuration.ingress.fqdn" --output tsv
+> ```
+> Y usar `az containerapp update --name <servicio> --resource-group $RG --set-env-vars ...` con el set **completo** de variables de ese servicio (no solo la URL — `--set-env-vars` reemplaza toda la lista, no la mergea). Después de actualizar, si vas a revisar con `printenv` dentro de una consola del Portal, **abrí una consola nueva** — una ya conectada desde antes del update se queda pegada al proceso viejo y muestra el valor viejo aunque ya se haya actualizado.
 
 ### 2.6 · Obtener la URL pública y probar
 

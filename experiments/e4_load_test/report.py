@@ -38,13 +38,27 @@ def main() -> None:
 
     saturation_step = None
     prev_p95 = None
+    # Error rate and throughput use the *cumulative* "Total Request/Failure
+    # Count" columns, diffed against the previous step's cumulative value —
+    # not the instantaneous "Requests/s"/"Failures/s" of whichever row
+    # happens to be last inside the window. Those are a single 1s sample, so
+    # a burst of failures mid-step (e.g. from a `docker stop` or a transient
+    # gateway timeout) can land on a quiet second and get reported as 0%
+    # even though real failures occurred somewhere in that 180s window.
+    prev_cum_req, prev_cum_fail = 0, 0
     for step, group in df.groupby("step_index"):
         users = int(group["User Count"].iloc[-1])
-        rps = group["Requests/s"].iloc[-1]
         p50, p95, p99 = group["50%"].iloc[-1], group["95%"].iloc[-1], group["99%"].iloc[-1]
-        failures = group["Failures/s"].iloc[-1] if "Failures/s" in group else 0
-        total_req = group["Requests/s"].iloc[-1] or 1
-        error_rate = failures / total_req if total_req else 0.0
+        cum_req = int(group["Total Request Count"].iloc[-1])
+        cum_fail = int(group["Total Failure Count"].iloc[-1])
+        step_elapsed_s = group["elapsed_s"].iloc[-1] - group["elapsed_s"].iloc[0]
+        step_elapsed_s = step_elapsed_s if step_elapsed_s > 0 else args.step_duration
+
+        delta_req = cum_req - prev_cum_req
+        delta_fail = cum_fail - prev_cum_fail
+        rps = delta_req / step_elapsed_s
+        error_rate = delta_fail / delta_req if delta_req else 0.0
+        prev_cum_req, prev_cum_fail = cum_req, cum_fail
 
         lines.append(f"| {step} | {users} | {rps:.1f} | {p50:.0f} | {p95:.0f} | {p99:.0f} | {error_rate:.1%} |")
 

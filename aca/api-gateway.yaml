@@ -28,6 +28,15 @@ properties:
             value: http://asr-service
           - name: TRANSCRIPTION_MANAGER_URL
             value: http://transcription-manager
+    # Horizontal autoscaling — api-gateway is the single public entry point,
+    # so 100% of traffic (including the validate-token round trip and the
+    # multipart audio forwarding) passes through it. Same --workers 4 /
+    # threshold reasoning as auth-service. See docs/06-horizontal-autoscaling.md.
     scale:
       minReplicas: 1
-      maxReplicas: 1
+      maxReplicas: 3
+      rules:
+        - name: http-concurrency
+          http:
+            metadata:
+              concurrentRequests: "10"

@@ -22,6 +22,17 @@ properties:
             value: http://asr-service
           - name: SERVICE_NAME
             value: audio-processor
+    # Horizontal autoscaling — audio-processor is in the critical path of
+    # every /transcribe request (ffmpeg conversion before forwarding to
+    # asr-service) and was fixed at 1 replica when E4 found auth-service as
+    # the load-test bottleneck; extended here on the same reasoning. Runs
+    # --workers 4 like auth-service (no module-global-model constraint), so
+    # same threshold. See docs/06-horizontal-autoscaling.md.
     scale:
       minReplicas: 1
-      maxReplicas: 1
+      maxReplicas: 3
+      rules:
+        - name: http-concurrency
+          http:
+            metadata:
+              concurrentRequests: "10"

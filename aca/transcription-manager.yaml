@@ -20,6 +20,17 @@ properties:
             value: postgresql+asyncpg://pgadmin:CHANGE_ME@pg-asr-quechua.postgres.database.azure.com/trans_db?ssl=require
           - name: SERVICE_NAME
             value: transcription-manager
+    # Horizontal autoscaling — asr-service awaits POST /internal/transcriptions
+    # synchronously before responding to the client (non-fatal on failure, but
+    # still blocking wall-clock time on the request), so a slow/overloaded
+    # single replica here inflates every transcribe response's latency even
+    # without raising the error rate. Same --workers 4 / threshold reasoning
+    # as auth-service. See docs/06-horizontal-autoscaling.md.
     scale:
       minReplicas: 1
-      maxReplicas: 1
+      maxReplicas: 3
+      rules:
+        - name: http-concurrency
+          http:
+            metadata:
+              concurrentRequests: "10"
