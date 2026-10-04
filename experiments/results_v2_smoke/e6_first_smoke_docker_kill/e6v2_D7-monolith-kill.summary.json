@@ -1,0 +1,32 @@
+{
+  "scenario": "D7-monolith-kill",
+  "container": "backend-monolith-baseline-1",
+  "mode": "kill",
+  "restart_policy": "unless-stopped",
+  "load_mode": "sync",
+  "users": 50,
+  "request_scored": "/api/v1/transcribe",
+  "detection_time_s": 0.97,
+  "mttr_s": null,
+  "outage_reverted_by_script_s": null,
+  "neighbour_degraded": {},
+  "before": {
+    "requests": 48,
+    "success_rate": 0.1458
+  },
+  "during": {
+    "requests": 404,
+    "success_rate": 0.0
+  },
+  "after": {
+    "requests": 176,
+    "success_rate": 0.0
+  },
+  "overall": {
+    "requests": 628,
+    "success_rate": 0.0111
+  },
+  "during_failures_by_status": {
+    "0": 404
+  }
+}

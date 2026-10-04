@@ -91,11 +91,19 @@ def transcribe_file(base_url: str, token: str, audio_path: str, timeout: float =
 
     if "processing_time" not in data:
         transcription_id = data.get("transcription_id")
-        detail_resp = httpx.get(
-            f"{base_url}/api/v1/transcriptions/{transcription_id}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=30,
-        )
+        if not transcription_id:
+            raise RuntimeError(f"transcribe returned no transcription_id: {data}")
+        # v2 persists the record in the background (off the response path), so
+        # it can lag the response by a few ms — retry briefly on 404.
+        for attempt in range(20):
+            detail_resp = httpx.get(
+                f"{base_url}/api/v1/transcriptions/{transcription_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=30,
+            )
+            if detail_resp.status_code != 404:
+                break
+            time.sleep(0.1 * (attempt + 1))
         detail_resp.raise_for_status()
         data = detail_resp.json()
 

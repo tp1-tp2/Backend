@@ -1,0 +1,34 @@
+{
+  "scenario": "D2-auth-kill-local",
+  "container": "backend-auth-service-1",
+  "mode": "kill",
+  "restart_policy": "unless-stopped",
+  "load_mode": "sync",
+  "users": 50,
+  "request_scored": "/api/v1/transcribe",
+  "detection_time_s": 0.93,
+  "mttr_s": null,
+  "outage_reverted_by_script_s": null,
+  "neighbour_degraded": {
+    "neighbor:http://localhost:8080/health": false,
+    "neighbor:http://localhost:8003/health": false,
+    "neighbor:http://localhost:8005/health": false
+  },
+  "before": {
+    "requests": 174,
+    "success_rate": 1.0
+  },
+  "during": {
+    "requests": 222,
+    "success_rate": 1.0
+  },
+  "after": {
+    "requests": 398,
+    "success_rate": 1.0
+  },
+  "overall": {
+    "requests": 794,
+    "success_rate": 1.0
+  },
+  "during_failures_by_status": {}
+}

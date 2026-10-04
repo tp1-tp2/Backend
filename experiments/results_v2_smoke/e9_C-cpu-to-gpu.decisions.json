@@ -1,0 +1,72 @@
+[
+  {
+    "timestamp": "2026-10-03T23:56:38.213651+00:00",
+    "previous_device": "cpu",
+    "previous_compute_type": "fp32",
+    "new_device": "cuda",
+    "new_compute_type": "fp32",
+    "reason": "gpu available with 7.03GB free VRAM",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 1,
+    "new_batch_size": 8,
+    "queue_depth": 0,
+    "t": 9.15
+  },
+  {
+    "timestamp": "2026-10-03T23:56:43.214608+00:00",
+    "previous_device": "cuda",
+    "previous_compute_type": "fp32",
+    "new_device": "cuda",
+    "new_compute_type": "fp32",
+    "reason": "batch 8->16; gpu available with 6.31GB free VRAM; queue pressure (depth 16) -> fp16",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 8,
+    "new_batch_size": 16,
+    "queue_depth": 16,
+    "t": 14.15
+  },
+  {
+    "timestamp": "2026-10-03T23:57:09.049132+00:00",
+    "previous_device": "cuda",
+    "previous_compute_type": "fp32",
+    "new_device": "cuda",
+    "new_compute_type": "fp16",
+    "reason": "gpu available with 5.84GB free VRAM; queue pressure (depth 16) -> fp16",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 16,
+    "new_batch_size": 16,
+    "queue_depth": 16,
+    "t": 39.98
+  },
+  {
+    "timestamp": "2026-10-03T23:57:29.049533+00:00",
+    "previous_device": "cuda",
+    "previous_compute_type": "fp16",
+    "new_device": "cuda",
+    "new_compute_type": "fp16",
+    "reason": "batch 16->8; gpu available with 6.08GB free VRAM",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 16,
+    "new_batch_size": 8,
+    "queue_depth": 0,
+    "t": 59.98
+  },
+  {
+    "timestamp": "2026-10-03T23:57:40.002029+00:00",
+    "previous_device": "cuda",
+    "previous_compute_type": "fp16",
+    "new_device": "cuda",
+    "new_compute_type": "fp32",
+    "reason": "gpu available with 6.08GB free VRAM",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 8,
+    "new_batch_size": 8,
+    "queue_depth": 0,
+    "t": 70.94
+  }
+]

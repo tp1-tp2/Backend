@@ -9,4 +9,5 @@ Usage:
         locust -f locustfile_constant.py --host http://localhost:8000 \
         --headless --users 50 --spawn-rate 10 --run-time 5m
 """
-from locustfile import TranscribeUser  # noqa: F401
+# E4_MODE=sync|async picks which of the two is active (the other is abstract).
+from locustfile import JobUser, TranscribeUser  # noqa: F401

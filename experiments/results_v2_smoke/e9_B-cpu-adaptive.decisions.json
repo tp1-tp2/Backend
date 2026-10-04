@@ -1,0 +1,30 @@
+[
+  {
+    "timestamp": "2026-10-04T00:09:13.170645+00:00",
+    "previous_device": "cpu",
+    "previous_compute_type": "fp32",
+    "new_device": "cpu",
+    "new_compute_type": "int8",
+    "reason": "force_device=cpu; queue pressure (depth 23) -> int8 quantization",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 1,
+    "new_batch_size": 1,
+    "queue_depth": 23,
+    "t": 25.15
+  },
+  {
+    "timestamp": "2026-10-04T00:09:28.864157+00:00",
+    "previous_device": "cpu",
+    "previous_compute_type": "int8",
+    "new_device": "cpu",
+    "new_compute_type": "fp32",
+    "reason": "rollback: cpu/int8 measured 2.538s/clip vs 1.342s/clip in cpu/fp32 -> state rejected on this host",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 1,
+    "new_batch_size": 1,
+    "queue_depth": 23,
+    "t": 40.84
+  }
+]

@@ -1,0 +1,36 @@
+{
+  "scenario": "D4-asr-kill-async",
+  "container": "backend-asr-service-1",
+  "mode": "kill",
+  "restart_policy": "unless-stopped",
+  "load_mode": "async",
+  "users": 50,
+  "request_scored": "job_e2e",
+  "detection_time_s": 1.44,
+  "mttr_s": null,
+  "outage_reverted_by_script_s": null,
+  "neighbour_degraded": {
+    "neighbor:http://localhost:8080/health": false,
+    "neighbor:http://localhost:8001/health": false,
+    "neighbor:http://localhost:8003/health": false,
+    "neighbor:http://localhost:8005/health": false
+  },
+  "before": {
+    "requests": 123,
+    "success_rate": 1.0
+  },
+  "during": {
+    "requests": 0,
+    "success_rate": null
+  },
+  "after": {
+    "requests": 0,
+    "success_rate": null
+  },
+  "overall": {
+    "requests": 123,
+    "success_rate": 1.0
+  },
+  "during_failures_by_status": {},
+  "jobs_lost": 0
+}

@@ -1,0 +1,37 @@
+{
+  "scenario": "D1-asr-crash",
+  "container": "backend-asr-service-1",
+  "mode": "crash",
+  "restart_policy": "unless-stopped",
+  "load_mode": "sync",
+  "users": 50,
+  "request_scored": "/api/v1/transcribe",
+  "detection_time_s": 1.21,
+  "mttr_s": 4.9,
+  "outage_reverted_by_script_s": null,
+  "neighbour_degraded": {
+    "neighbor:http://localhost:8080/health": false,
+    "neighbor:http://localhost:8001/health": false,
+    "neighbor:http://localhost:8003/health": false,
+    "neighbor:http://localhost:8005/health": false
+  },
+  "before": {
+    "requests": 139,
+    "success_rate": 1.0
+  },
+  "during": {
+    "requests": 90,
+    "success_rate": 0.1778
+  },
+  "after": {
+    "requests": 574,
+    "success_rate": 0.9774
+  },
+  "overall": {
+    "requests": 803,
+    "success_rate": 0.8917
+  },
+  "during_failures_by_status": {
+    "503": 74
+  }
+}

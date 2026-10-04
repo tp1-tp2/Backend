@@ -1,0 +1,34 @@
+{
+  "scenario": "D3-trans-kill",
+  "container": "backend-transcription-manager-1",
+  "mode": "kill",
+  "restart_policy": "unless-stopped",
+  "load_mode": "sync",
+  "users": 50,
+  "request_scored": "/api/v1/transcribe",
+  "detection_time_s": 1.64,
+  "mttr_s": null,
+  "outage_reverted_by_script_s": null,
+  "neighbour_degraded": {
+    "neighbor:http://localhost:8080/health": false,
+    "neighbor:http://localhost:8001/health": false,
+    "neighbor:http://localhost:8003/health": false
+  },
+  "before": {
+    "requests": 204,
+    "success_rate": 0.9118
+  },
+  "during": {
+    "requests": 219,
+    "success_rate": 1.0
+  },
+  "after": {
+    "requests": 372,
+    "success_rate": 1.0
+  },
+  "overall": {
+    "requests": 795,
+    "success_rate": 0.9774
+  },
+  "during_failures_by_status": {}
+}

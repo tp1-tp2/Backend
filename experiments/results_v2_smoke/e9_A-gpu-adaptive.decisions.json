@@ -1,0 +1,72 @@
+[
+  {
+    "timestamp": "2026-10-04T00:12:41.971810+00:00",
+    "previous_device": "cuda",
+    "previous_compute_type": "fp32",
+    "new_device": "cuda",
+    "new_compute_type": "fp32",
+    "reason": "batch 8->16; gpu available with 6.31GB free VRAM; queue pressure (depth 16) -> fp16",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 8,
+    "new_batch_size": 16,
+    "queue_depth": 16,
+    "t": 13.24
+  },
+  {
+    "timestamp": "2026-10-04T00:12:52.891420+00:00",
+    "previous_device": "cuda",
+    "previous_compute_type": "fp32",
+    "new_device": "cuda",
+    "new_compute_type": "fp16",
+    "reason": "gpu available with 5.84GB free VRAM; queue pressure (depth 16) -> fp16",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 16,
+    "new_batch_size": 16,
+    "queue_depth": 16,
+    "t": 24.16
+  },
+  {
+    "timestamp": "2026-10-04T00:12:57.893476+00:00",
+    "previous_device": "cuda",
+    "previous_compute_type": "fp32",
+    "new_device": "cuda",
+    "new_compute_type": "fp16",
+    "reason": "probation passed: 0.180s/clip vs 0.217s/clip in cuda/fp32",
+    "changed": false,
+    "forced": false,
+    "previous_batch_size": 16,
+    "new_batch_size": 16,
+    "queue_depth": 8,
+    "t": 29.16
+  },
+  {
+    "timestamp": "2026-10-04T00:13:37.916402+00:00",
+    "previous_device": "cuda",
+    "previous_compute_type": "fp16",
+    "new_device": "cuda",
+    "new_compute_type": "fp16",
+    "reason": "batch 16->8; gpu available with 5.76GB free VRAM",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 16,
+    "new_batch_size": 8,
+    "queue_depth": 0,
+    "t": 69.19
+  },
+  {
+    "timestamp": "2026-10-04T00:13:48.878774+00:00",
+    "previous_device": "cuda",
+    "previous_compute_type": "fp16",
+    "new_device": "cuda",
+    "new_compute_type": "fp32",
+    "reason": "gpu available with 5.76GB free VRAM",
+    "changed": true,
+    "forced": false,
+    "previous_batch_size": 8,
+    "new_batch_size": 8,
+    "queue_depth": 0,
+    "t": 80.15
+  }
+]
