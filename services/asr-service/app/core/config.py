@@ -13,6 +13,21 @@ class Settings(BaseSettings):
     model_id: str = "QuechuaBase/whisper-base-qxp-finetuned"
     device: str = "cpu"  # startup hint only — device_manager may migrate at runtime
 
+    # --- Inference engine (docs/14-optimizacion-cpu.md) ---
+    # "transformers": PyTorch pipeline (v1/v2 behaviour).
+    # "ctranslate2": same weights converted at build time, run by faster-whisper.
+    engine: str = "transformers"
+    ct2_model_dir: str = "/models/ct2"
+    # Parallel inference lanes: clips decoded concurrently by the model. Only
+    # meaningful for ctranslate2 (the transformers pipeline is not safe to call
+    # from several threads at once, so it always gets one lane).
+    inference_lanes: int = 1
+    ct2_cpu_threads: int = 0  # threads per lane; 0 = cpu_count // lanes
+
+    @property
+    def effective_lanes(self) -> int:
+        return max(1, self.inference_lanes) if self.engine == "ctranslate2" else 1
+
     # --- Runtime adaptation (device/precision) ---
     # See services/asr-service/app/services/device_manager.py and
     # docs/01-adaptive-mechanism.md for the full policy design.

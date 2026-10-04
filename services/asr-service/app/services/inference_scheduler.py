@@ -71,6 +71,11 @@ class InferenceScheduler:
         self._seq = itertools.count()
         self._task: Optional[asyncio.Task] = None
         self._executor: Optional[ThreadPoolExecutor] = None
+        self._lane_sem: Optional[asyncio.Semaphore] = None
+        self._running_batches: set[asyncio.Task] = set()
+        # Parallel execution lanes (docs/14-optimizacion-cpu.md): with the
+        # CTranslate2 engine several clips are decoded at once on CPU.
+        self.lanes = 1
         self.max_batch_size = settings.batch_size_cpu
         self._ewma_item_s: Optional[float] = None  # seconds of model time per clip
         self._in_flight = 0
@@ -95,9 +100,13 @@ class InferenceScheduler:
         if self.running:
             return
         self._queue = asyncio.PriorityQueue()
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="inference")
+        self.lanes = settings.effective_lanes
+        self._lane_sem = asyncio.Semaphore(self.lanes)
+        self._executor = ThreadPoolExecutor(max_workers=self.lanes, thread_name_prefix="inference")
         self._task = asyncio.create_task(self._loop())
-        logger.info("Inference scheduler started (window=%sms)", settings.batch_window_ms)
+        logger.info(
+            "Inference scheduler started (window=%sms, lanes=%d)", settings.batch_window_ms, self.lanes
+        )
 
     async def stop(self) -> None:
         if self._task is not None:
@@ -107,6 +116,9 @@ class InferenceScheduler:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        for t in list(self._running_batches):
+            t.cancel()
+        self._running_batches.clear()
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
@@ -123,7 +135,7 @@ class InferenceScheduler:
     def estimated_wait_s(self) -> float:
         """Expected time before a newly queued clip starts running."""
         per_item = self._ewma_item_s or 0.0
-        return (self.depth + self._in_flight) * per_item
+        return (self.depth + self._in_flight) * per_item / max(1, self.lanes)
 
     def state_totals(self, state: str) -> tuple[float, int]:
         """(total model seconds, clips) measured in `state` so far."""
@@ -139,6 +151,7 @@ class InferenceScheduler:
             "running": self.running,
             "queue_depth": self.depth,
             "in_flight": self._in_flight,
+            "lanes": self.lanes,
             "max_batch_size": self.max_batch_size,
             "estimated_wait_s": round(self.estimated_wait_s(), 3),
             "ewma_model_s_per_clip": round(self._ewma_item_s, 4) if self._ewma_item_s else None,
@@ -186,8 +199,12 @@ class InferenceScheduler:
     async def _loop(self) -> None:
         loop = asyncio.get_running_loop()
         while True:
+            # One lane must be free before a batch is formed, so items keep
+            # their priority order in the queue until a lane can run them.
+            await self._lane_sem.acquire()
             item = await self._queue.get()
             if item.future.done():  # caller timed out / was cancelled while queued
+                self._lane_sem.release()
                 continue
             batch = [item]
             if item.duration <= _SHORT_FORM_MAX_S and self.max_batch_size > 1:
@@ -209,7 +226,15 @@ class InferenceScheduler:
                         await self._queue.put(nxt)  # keeps its priority/seq; runs alone next
                         break
                     batch.append(nxt)
+            task = asyncio.create_task(self._run_on_lane(batch))
+            self._running_batches.add(task)
+            task.add_done_callback(self._running_batches.discard)
+
+    async def _run_on_lane(self, batch: list[_Item]) -> None:
+        try:
             await self._execute(batch)
+        finally:
+            self._lane_sem.release()
 
     async def _execute(self, batch: list[_Item]) -> None:
         loop = asyncio.get_running_loop()
@@ -219,8 +244,9 @@ class InferenceScheduler:
             self.queue_wait_ewma_s = (
                 wait if self.queue_wait_ewma_s is None else 0.8 * self.queue_wait_ewma_s + 0.2 * wait
             )
-        self._in_flight = len(batch)
+        self._in_flight += len(batch)
         t0 = time.monotonic()
+        released = False
         try:
             results = await loop.run_in_executor(
                 self._executor, self._run_batch, [it.path for it in batch]
@@ -232,7 +258,8 @@ class InferenceScheduler:
                 self._clear_cuda_cache()
                 if len(batch) > 1:
                     half = len(batch) // 2
-                    self._in_flight = 0
+                    self._in_flight -= len(batch)
+                    released = True
                     await self._execute(batch[:half])
                     await self._execute(batch[half:])
                     return
@@ -241,7 +268,8 @@ class InferenceScheduler:
                     it.future.set_exception(exc)
             return
         finally:
-            self._in_flight = 0
+            if not released:
+                self._in_flight -= len(batch)
 
         elapsed = time.monotonic() - t0
         per_item = elapsed / len(batch)

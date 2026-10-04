@@ -18,11 +18,21 @@ _pipe = None
 
 
 def load_model():
+    global _pipe
+    if settings.engine == "ctranslate2":
+        from app.services.ct2_engine import CT2Pipe
+
+        _pipe = CT2Pipe(
+            settings.ct2_model_dir, settings.device, settings.compute_type,
+            lanes=settings.inference_lanes, cpu_threads=settings.ct2_cpu_threads,
+        )
+        logger.info("CTranslate2 model loaded (fixed device=%s)", settings.device)
+        return _pipe
+
     import logging as _logging
 
     from transformers import WhisperTokenizer, pipeline
 
-    global _pipe
     _logging.getLogger("transformers").setLevel(_logging.ERROR)
     device_index = 0 if settings.device == "cuda" else -1
     logger.info("Loading model '%s' on FIXED device '%s' (no adaptation)", settings.model_id, settings.device)
@@ -45,6 +55,10 @@ def _run_whisper(audio_path: str) -> dict:
     import soundfile as sf
 
     audio_array, sample_rate = sf.read(audio_path, dtype="float32")
+    if getattr(_pipe, "engine", None) == "ctranslate2":
+        if audio_array.ndim > 1:
+            audio_array = audio_array.mean(axis=1)
+        return _pipe.transcribe(audio_array)  # ffmpeg already wrote 16 kHz mono
     result = _pipe(
         {"array": audio_array, "sampling_rate": sample_rate},
         return_timestamps=True,

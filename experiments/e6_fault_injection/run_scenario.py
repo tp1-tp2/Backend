@@ -78,17 +78,17 @@ class HealthMonitor(threading.Thread):
         super().__init__(daemon=True)
         self.urls = urls  # label -> url
         self.samples: list[dict] = []
-        self._stop = threading.Event()
+        self._halt = threading.Event()
 
     def run(self):
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             now = time.time()
             for label, url in self.urls.items():
                 self.samples.append({"ts": now, "label": label, "healthy": _healthy(url)})
-            self._stop.wait(1.0)
+            self._halt.wait(1.0)
 
     def stop(self):
-        self._stop.set()
+        self._halt.set()
 
 
 def _start_load(args, raw_csv: Path) -> subprocess.Popen:

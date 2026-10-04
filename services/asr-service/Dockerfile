@@ -28,5 +28,10 @@ ENV PATH=/root/.local/bin:$PATH
 ARG MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned
 ENV HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 RUN python -c "from transformers import WhisperTokenizer, pipeline; tok = WhisperTokenizer.from_pretrained('${MODEL_ID}', clean_up_tokenization_spaces=False); pipeline('automatic-speech-recognition', model='${MODEL_ID}', tokenizer=tok, device=-1)"
+# Same weights converted to CTranslate2 for ENGINE=ctranslate2. Weights stay
+# float32 on disk; int8/fp16 are applied at load time, so one conversion serves
+# every precision the adaptation policy can switch to. faster-whisper needs the
+# fast tokenizer file, which the model repo does not ship, so it is exported here.
+RUN ct2-transformers-converter --model ${MODEL_ID} --output_dir /models/ct2 --copy_files preprocessor_config.json     && python -c "from transformers import WhisperTokenizerFast; WhisperTokenizerFast.from_pretrained('${MODEL_ID}').save_pretrained('/tmp/tok')"     && cp /tmp/tok/tokenizer.json /models/ct2/ && rm -rf /tmp/tok
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

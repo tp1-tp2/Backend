@@ -132,6 +132,10 @@ services:
       - AUTH_SERVICE_URL=http://auth-service:8000
       - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8000
       - DEVICE=${DEVICE:-cpu}
+      # Inference engine and parallel lanes (docs/14-optimizacion-cpu.md)
+      - ENGINE=${ENGINE:-transformers}
+      - INFERENCE_LANES=${INFERENCE_LANES:-1}
+      - CT2_CPU_THREADS=${CT2_CPU_THREADS:-0}
       - ADAPTIVE_MODE=${ADAPTIVE_MODE:-true}
       - FORCE_DEVICE=${FORCE_DEVICE:-}
       - FORCE_COMPUTE_TYPE=${FORCE_COMPUTE_TYPE:-}
@@ -194,6 +198,10 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-changeme_in_production}
       - MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned
       - DEVICE=${MONOLITH_DEVICE:-cpu}
+      - ENGINE=${MONOLITH_ENGINE:-transformers}
+      - COMPUTE_TYPE=${MONOLITH_COMPUTE_TYPE:-fp32}
+      - INFERENCE_LANES=${MONOLITH_LANES:-1}
+      - CT2_CPU_THREADS=${MONOLITH_CT2_CPU_THREADS:-0}
       - HF_HUB_DISABLE_IMPLICIT_TOKEN=1
     volumes:
       - monolith_audio:/tmp/asr_audio

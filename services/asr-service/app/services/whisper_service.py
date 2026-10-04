@@ -31,6 +31,14 @@ def _build_pipe(device: str, compute_type: str):
     """Blocking. Builds a fresh pipeline for (device, compute_type). Does NOT
     touch the module globals — the caller swaps them in atomically.
     """
+    if settings.engine == "ctranslate2":
+        from app.services.ct2_engine import CT2Pipe
+
+        return CT2Pipe(
+            settings.ct2_model_dir, device, compute_type,
+            lanes=settings.effective_lanes, cpu_threads=settings.ct2_cpu_threads,
+        )
+
     import logging as _logging
 
     import torch
@@ -179,6 +187,11 @@ def _run_whisper_batch(audio_paths: list[str]) -> list[dict]:
     """
     with _swap_lock:
         pipe = _pipe  # snapshot the current pipe; unaffected by a concurrent reload
+
+    if getattr(pipe, "engine", None) == "ctranslate2":
+        # CTranslate2 parallelism comes from lanes (concurrent calls), not
+        # from padding clips into one batch, so a batch is decoded clip by clip.
+        return [pipe.transcribe(_load_audio(path)[0]) for path in audio_paths]
 
     inputs = []
     for path in audio_paths:

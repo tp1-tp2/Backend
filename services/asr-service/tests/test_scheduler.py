@@ -197,3 +197,51 @@ async def test_cancelled_waiter_is_skipped():
     finally:
         await sched.stop()
     assert ["abandoned"] not in calls  # timed-out caller never costs model time
+
+
+async def test_parallel_lanes_run_concurrently_and_keep_priority():
+    """With N lanes (ctranslate2 engine) N clips run at the same time; the
+    queue still releases waiting items in priority order (docs/14)."""
+    running, peak = [0], [0]
+    order = []
+    lock = threading.Lock()
+    gate = threading.Event()
+
+    def run(paths):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        if paths[0].startswith("blocker"):
+            gate.wait(5)
+        with lock:
+            running[0] -= 1
+            order.extend(paths)
+        return [{"text": p, "segments": []} for p in paths]
+
+    sched = InferenceScheduler(run)
+    sched.max_batch_size = 1
+    with patch.object(settings, "engine", "ctranslate2"), patch.object(settings, "inference_lanes", 2), \
+            patch.object(settings, "partial_shed_depth", 100):
+        await sched.start()
+        try:
+            assert sched.lanes == 2
+            blockers = [asyncio.create_task(sched.submit(f"blocker{i}", 1.0, PRIORITY_REQUEST)) for i in (1, 2)]
+            await asyncio.sleep(0.05)  # both lanes busy
+            assert sched.in_flight == 2
+            tasks = [
+                asyncio.create_task(sched.submit("job", 1.0, PRIORITY_JOB)),
+                asyncio.create_task(sched.submit("final", 1.0, PRIORITY_STREAM_FINAL)),
+            ]
+            await asyncio.sleep(0.05)
+            gate.set()
+            await asyncio.gather(*blockers, *tasks)
+        finally:
+            await sched.stop()
+    assert peak[0] == 2
+    assert order.index("final") < order.index("job")
+    assert sched.in_flight == 0
+
+
+def test_transformers_engine_always_gets_one_lane():
+    with patch.object(settings, "engine", "transformers"), patch.object(settings, "inference_lanes", 4):
+        assert settings.effective_lanes == 1
