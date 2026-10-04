@@ -14,6 +14,7 @@ from app.schemas.transcription import (
     StreamingSession,
 )
 from app.services import codec_service, whisper_service
+from app.services.inference_scheduler import PRIORITY_PARTIAL, PRIORITY_STREAM_FINAL
 
 logger = logging.getLogger(__name__)
 
@@ -140,13 +141,15 @@ class ConnectionManager:
         try:
             sample_rate = self._sessions.get(session_id).sample_rate if self._sessions.get(session_id) else 16000
             _write_wav(tmp_path, buf, sample_rate)
-            loop = asyncio.get_event_loop()
             audio_duration = len(buf) / self._bytes_per_second(session_id)
             timeout = max(60.0, audio_duration * 10.0)
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, whisper_service._run_whisper, tmp_path),
-                timeout=timeout,
+            # Lowest priority in the inference scheduler; shed (None) when the
+            # queue is deep so live previews never delay finals or requests.
+            result = await whisper_service.run_inference(
+                tmp_path, audio_duration, PRIORITY_PARTIAL, timeout=timeout, admission=False
             )
+            if result is None:
+                return None
             text = (result.get("text") or "").strip()
         except Exception as exc:
             logger.debug("Partial transcription skipped: %s", exc)
@@ -207,6 +210,8 @@ class ConnectionManager:
                 audio_id=audio_id or str(uuid.uuid4()),
                 audio_filename=f"stream.{encoding if encoding != 'pcm' else 'wav'}",
                 audio_duration=duration,
+                priority=PRIORITY_STREAM_FINAL,
+                admission=False,  # the session was already admitted at connect()
             )
         except Exception as exc:
             logger.error("Stream finalization failed: %s", exc)

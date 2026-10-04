@@ -1,0 +1,32 @@
+# v2 (docs/09-arquitectura-v2.md): job queue (Redis Streams), job status
+# store and token-revocation mirror. Internal-only TCP ingress — reachable as
+# redis:6379 from the other apps in the environment, never from the internet.
+#
+# For anything beyond the thesis evaluation, prefer a managed Azure Cache for
+# Redis (persistence + TLS + auth). This container keeps the evaluation cheap
+# (Azure for Students credits) and AOF gives it restart durability, but a
+# single replica of it is itself a single point of failure for the ASYNC path
+# (the synchronous /transcribe path does not depend on it, and the gateway
+# fails open on revocation checks) — this is measured explicitly in E6 v2.
+location: Canada Central
+type: Microsoft.App/containerApps
+properties:
+  managedEnvironmentId: /subscriptions/cfcab251-b0bf-45d7-8a11-b78b26aa6992/resourceGroups/rg-asr-quechua/providers/Microsoft.App/managedEnvironments/aca-asr-quechua
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      external: false
+      targetPort: 6379
+      exposedPort: 6379
+      transport: Tcp
+  template:
+    containers:
+      - name: redis
+        image: docker.io/library/redis:7.2-alpine
+        command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+    scale:
+      minReplicas: 1
+      maxReplicas: 1  # stateful: never scale out a single-node Redis

@@ -1,15 +1,31 @@
 import httpx
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.core import token_validator
 from app.core.config import settings
-from app.core.exceptions import AuthenticationError, ServiceUnavailableError
 
 security = HTTPBearer()
 
 
-async def get_http_client() -> httpx.AsyncClient:
-    async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
+def build_http_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        timeout=settings.request_timeout,
+        limits=httpx.Limits(
+            max_connections=settings.http_max_connections,
+            max_keepalive_connections=settings.http_max_keepalive,
+        ),
+    )
+
+
+async def get_http_client(request: Request) -> httpx.AsyncClient:
+    # Shared keep-alive pool created in main.py's lifespan. Previously a new
+    # AsyncClient (and TCP handshake) was built per request, per hop.
+    shared = getattr(request.app.state, "http", None)
+    if shared is not None:
+        yield shared
+        return
+    async with build_http_client() as client:
         yield client
 
 
@@ -17,20 +33,5 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     http: httpx.AsyncClient = Depends(get_http_client),
 ) -> dict:
-    token = credentials.credentials
-    try:
-        resp = await http.post(
-            f"{settings.auth_service_url}/internal/auth/validate-token",
-            json={"token": token},
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("valid"):
-                return {
-                    "user_id": data["user_id"],
-                    "email": data["email"],
-                    "token": token,
-                }
-        raise AuthenticationError()
-    except (httpx.TimeoutException, httpx.ConnectError) as exc:
-        raise ServiceUnavailableError("auth-service") from exc
+    user = await token_validator.validate(credentials.credentials, http)
+    return user.as_dict()

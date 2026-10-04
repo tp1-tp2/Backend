@@ -11,9 +11,10 @@ import json
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.api.dependencies import get_current_user, get_http_client
+from app.core.config import settings
 from app.main import app
 
 # Default authenticated user injected when using the `auth_client` fixture
@@ -53,8 +54,11 @@ def anon_client(http):
     """TestClient without any auth override.  Bearer tokens are still validated
     by the real get_current_user dependency (which uses the mocked http)."""
     app.dependency_overrides[get_http_client] = lambda: http
-    with TestClient(app, raise_server_exceptions=False) as c:
-        yield c, http
+    # These flows assert the round-trip to auth-service, i.e. the original
+    # "remote" validation mode (local mode is covered in test_jwt_middleware.py).
+    with patch.object(settings, "auth_mode", "remote"):
+        with TestClient(app, raise_server_exceptions=False) as c:
+            yield c, http
     app.dependency_overrides.clear()
 
 

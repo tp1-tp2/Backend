@@ -1,5 +1,7 @@
 from fastapi import HTTPException
 
+from app.core.config import settings
+
 
 class AuthenticationError(HTTPException):
     def __init__(self, message: str = "Invalid or expired token"):
@@ -19,9 +21,23 @@ class ServiceUnavailableError(HTTPException):
         )
 
 
+class UpstreamOverloadedError(HTTPException):
+    """503 + Retry-After: a dependency answered but could not serve the request
+    (overloaded / degraded). Distinct from 401 so clients and load tests can
+    tell "bad credentials" apart from "try again shortly".
+    """
+
+    def __init__(self, service: str):
+        super().__init__(
+            status_code=503,
+            detail={"errorCode": "SYSTEM_003", "message": f"{service} overloaded, retry later"},
+            headers={"Retry-After": str(settings.retry_after_seconds)},
+        )
+
+
 class GatewayTimeoutError(HTTPException):
     def __init__(self):
         super().__init__(
             status_code=504,
-            detail={"errorCode": "SYSTEM_004", "message": "Request processing timeout after 30 seconds"},
+            detail={"errorCode": "SYSTEM_004", "message": "Upstream request timed out"},
         )

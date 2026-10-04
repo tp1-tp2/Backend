@@ -6,6 +6,9 @@ class Settings(BaseSettings):
     version: str = "1.0.0"
 
     database_url: str = "postgresql+asyncpg://user_user:user_pass@localhost:5432/user_db"
+    # Bounded SQLAlchemy pool per worker (see auth-service config for rationale)
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
     auth_service_url: str = "http://auth-service:8000"
     email_confirmation_timeout_seconds: int = 30
     email_change_expiry_hours: int = 24

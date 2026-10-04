@@ -28,13 +28,21 @@ properties:
             value: http://asr-service
           - name: TRANSCRIPTION_MANAGER_URL
             value: http://transcription-manager
+          # v2 (docs/09-arquitectura-v2.md): JWT validated in the gateway, so
+          # auth-service is no longer on the critical path of every request.
+          - name: AUTH_MODE
+            value: local
+          - name: JWT_SECRET_KEY
+            value: CHANGE_ME  # must equal auth-service's JWT_SECRET_KEY
+          - name: REDIS_URL
+            value: redis://redis:6379/0
     # Horizontal autoscaling — api-gateway is the single public entry point,
     # so 100% of traffic (including the validate-token round trip and the
     # multipart audio forwarding) passes through it. Same --workers 4 /
     # threshold reasoning as auth-service. See docs/06-horizontal-autoscaling.md.
     scale:
-      minReplicas: 1
-      maxReplicas: 3
+      minReplicas: 2  # v2: no cold start on the single public entry point
+      maxReplicas: 5
       rules:
         - name: http-concurrency
           http:

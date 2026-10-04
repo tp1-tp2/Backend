@@ -25,6 +25,14 @@ class AudioUploadResponse(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class JobAcceptedResponse(BaseModel):
+    job_id: str
+    audio_id: str
+    status: str
+    status_url: str
+    queue_backlog: int = 0
+
+
 # ---------- Internal (service-to-service) ----------
 
 class ProcessAudioRequest(BaseModel):

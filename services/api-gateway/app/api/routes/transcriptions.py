@@ -9,6 +9,9 @@ from app.core.exceptions import GatewayTimeoutError, ServiceUnavailableError
 router = APIRouter(tags=["transcriptions"])
 
 
+_FORWARDED_HEADERS = {"content-disposition", "retry-after"}
+
+
 def _fwd(resp: httpx.Response) -> Response:
     return Response(
         content=resp.content,
@@ -17,7 +20,7 @@ def _fwd(resp: httpx.Response) -> Response:
         headers={
             k: v
             for k, v in resp.headers.items()
-            if k.lower() == "content-disposition"
+            if k.lower() in _FORWARDED_HEADERS
         },
     )
 
@@ -34,7 +37,7 @@ async def transcribe(
             f"{settings.audio_processor_url}/internal/audio/process",
             files={"file": (file.filename, content, file.content_type)},
             data={"user_id": user["user_id"]},
-            timeout=300,  # Whisper may take time
+            timeout=settings.transcribe_timeout,
         )
         return _fwd(resp)
     except httpx.TimeoutException as exc:

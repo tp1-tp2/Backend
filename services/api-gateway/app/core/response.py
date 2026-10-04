@@ -14,9 +14,12 @@ def success_response(data: dict, status_code: int = 200) -> JSONResponse:
     )
 
 
-def error_response(error_code: str, message: str, status_code: int) -> JSONResponse:
+def error_response(
+    error_code: str, message: str, status_code: int, headers: dict | None = None
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
+        headers=headers,
         content={
             "status": "error",
             "errorCode": error_code,

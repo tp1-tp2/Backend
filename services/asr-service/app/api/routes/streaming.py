@@ -16,7 +16,22 @@ router = APIRouter(tags=["streaming"])
 
 
 async def _validate_jwt(token: str) -> dict | None:
-    """Call Auth Service to validate the token. Returns {user_id, email} or None."""
+    """Validate the token. Returns {user_id, email} or None.
+
+    AUTH_MODE=local verifies the signature here (the gateway already checked
+    revocation before proxying the socket), so opening a stream no longer
+    depends on auth-service being up. AUTH_MODE=remote keeps the original
+    round-trip to auth-service.
+    """
+    if settings.auth_mode == "local":
+        import jwt
+
+        try:
+            data = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+            return {"user_id": data["user_id"], "email": data["email"]}
+        except (jwt.InvalidTokenError, KeyError) as exc:
+            logger.warning("JWT validation failed: %s", exc)
+            return None
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(

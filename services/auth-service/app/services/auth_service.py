@@ -19,6 +19,7 @@ from app.core.security import (
     verify_password,
 )
 from app.core.email import send_recovery_email
+from app.core.revocation import publish_revocation
 from app.db.repositories import BlocklistRepository, CredentialRepository, RecoveryRepository
 from app.schemas.auth import TokenResponse, UserInfo, ValidateTokenResponse
 from app.services.rate_limiter import rate_limiter
@@ -57,6 +58,7 @@ class AuthService:
         token_hash = hash_token(token)
         expires_at = datetime.fromtimestamp(payload.exp, tz=timezone.utc)
         await self._blocklist.add(token_hash, payload.user_id, expires_at)
+        await publish_revocation(token_hash, expires_at)
 
     async def validate_token(self, token: str) -> ValidateTokenResponse:
         try:
@@ -85,6 +87,7 @@ class AuthService:
         expires_at = datetime.fromisoformat(expires_at_iso)
         user_id = payload.user_id if payload else ""
         await self._blocklist.add(token_hash, user_id, expires_at)
+        await publish_revocation(token_hash, expires_at)
 
     async def create_credential(self, user_id: str, email: str, password: str) -> None:
         await self._credentials.create(user_id, email, hash_password(password))

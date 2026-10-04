@@ -5,20 +5,18 @@ import httpx
 import websockets
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+from app.api.dependencies import build_http_client
+from app.core import token_validator
 from app.core.config import settings
 
 router = APIRouter(tags=["streaming"])
 logger = logging.getLogger(__name__)
 
 
-async def _validate_token(token: str) -> bool:
+async def _validate_token(token: str, http: httpx.AsyncClient) -> bool:
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(
-                f"{settings.auth_service_url}/internal/auth/validate-token",
-                json={"token": token},
-            )
-            return resp.status_code == 200 and resp.json().get("valid", False)
+        await token_validator.validate(token, http)
+        return True
     except Exception:
         return False
 
@@ -30,7 +28,13 @@ async def ws_proxy(
     sample_rate: int = Query(16000),
     encoding: str = Query("pcm"),
 ):
-    if not await _validate_token(token):
+    http = getattr(websocket.app.state, "http", None)
+    if http is None:
+        async with build_http_client() as tmp_http:
+            valid = await _validate_token(token, tmp_http)
+    else:
+        valid = await _validate_token(token, http)
+    if not valid:
         await websocket.close(code=1008)
         return
 

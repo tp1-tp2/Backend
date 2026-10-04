@@ -1,0 +1,34 @@
+# Standalone GPU worker for the hybrid topology (docs/09-arquitectura-v2.md):
+# runs ONLY asr-service, as a job consumer, on a machine with a GPU, attached
+# to a Redis that lives elsewhere (e.g. the cloud deployment). Workers PULL
+# jobs, so this machine needs outbound access to Redis only — no inbound port,
+# no public ingress.
+#
+#   REMOTE_REDIS_URL=rediss://:<password>@<host>:6380/0 \
+#   TRANSCRIPTION_MANAGER_URL=https://<internal-or-tunnelled-url> \
+#   docker compose -f docker-compose.worker.yml up -d --build
+#
+# Security: only point this at a Redis that requires a password and TLS
+# (rediss://). Never expose an unauthenticated Redis to the internet.
+services:
+  asr-worker:
+    build: ./services/asr-service
+    environment:
+      - SERVICE_NAME=asr-worker
+      - MODEL_ID=QuechuaBase/whisper-base-qxp-finetuned
+      - HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+      - DEVICE=${DEVICE:-cuda}
+      - ADAPTIVE_MODE=${ADAPTIVE_MODE:-true}
+      - REDIS_URL=${REMOTE_REDIS_URL:?set REMOTE_REDIS_URL}
+      - JOB_WORKER_ENABLED=true
+      - JOB_WORKER_CONCURRENCY=${JOB_WORKER_CONCURRENCY:-32}
+      - TRANSCRIPTION_MANAGER_URL=${TRANSCRIPTION_MANAGER_URL:?set TRANSCRIPTION_MANAGER_URL}
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

@@ -1,0 +1,56 @@
+# v2 (docs/09-arquitectura-v2.md): asynchronous transcription workers.
+#
+# Same image as asr-service, run as a pure Redis Streams consumer (no
+# ingress). Scaled by KEDA on the CONSUMER-GROUP BACKLOG — the signal that
+# directly measures unserved demand — instead of on HTTP concurrency (v1,
+# docs/06-horizontal-autoscaling.md), which a queue-based worker never sees.
+# minReplicas 0: no idle cost when there is no queued work (scale to zero).
+#
+# A local GPU machine can join the same consumer group with
+# docker-compose.worker.yml (hybrid topology): KEDA then only adds CPU replicas
+# when the GPU worker alone cannot keep the backlog under the threshold.
+location: Canada Central
+type: Microsoft.App/containerApps
+properties:
+  managedEnvironmentId: /subscriptions/cfcab251-b0bf-45d7-8a11-b78b26aa6992/resourceGroups/rg-asr-quechua/providers/Microsoft.App/managedEnvironments/aca-asr-quechua
+  configuration:
+    activeRevisionsMode: Single
+  template:
+    containers:
+      - name: asr-worker
+        image: ghcr.io/zrodrigochirinos/asr-service:latest
+        resources:
+          cpu: 2.0
+          memory: 4Gi
+        env:
+          - name: SERVICE_NAME
+            value: asr-worker
+          - name: MODEL_ID
+            value: QuechuaBase/whisper-base-qxp-finetuned
+          - name: DEVICE
+            value: cpu
+          - name: ADAPTIVE_MODE
+            value: "true"
+          - name: TRANSCRIPTION_MANAGER_URL
+            value: http://transcription-manager
+          - name: REDIS_URL
+            value: redis://redis:6379/0
+          - name: JOB_WORKER_ENABLED
+            value: "true"
+          - name: JOB_WORKER_CONCURRENCY
+            value: "4"
+    scale:
+      minReplicas: 0
+      maxReplicas: 10
+      rules:
+        - name: job-backlog
+          custom:
+            type: redis-streams
+            metadata:
+              address: redis:6379
+              stream: asr:jobs
+              consumerGroup: asr-workers
+              # Lag-based: one replica per 8 jobs not yet delivered
+              # (requires Redis >= 7.0 for consumer-group lag).
+              lagCount: "8"
+              activationLagCount: "1"

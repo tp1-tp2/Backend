@@ -22,6 +22,8 @@ properties:
             value: http://asr-service
           - name: SERVICE_NAME
             value: audio-processor
+          - name: REDIS_URL
+            value: redis://redis:6379/0
     # Horizontal autoscaling — audio-processor is in the critical path of
     # every /transcribe request (ffmpeg conversion before forwarding to
     # asr-service) and was fixed at 1 replica when E4 found auth-service as

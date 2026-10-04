@@ -10,6 +10,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
 
+    # Revocation mirror read by api-gateway in AUTH_MODE=local (empty = disabled)
+    redis_url: str = ""
+
+    # SQLAlchemy pool per worker process. Bound it explicitly: replicas x
+    # workers x (pool_size + max_overflow) must stay under the Postgres
+    # server's max_connections (Standard_B1ms is shared by all 4 databases).
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
+
     bcrypt_rounds: int = 12
     rate_limit_attempts: int = 5
     rate_limit_window_minutes: int = 15

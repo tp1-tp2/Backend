@@ -283,9 +283,19 @@ GET    /api/v1/transcriptions         Historial paginado
 GET    /api/v1/transcriptions/{id}    Detalle con word confidences
 GET    /api/v1/transcriptions/{id}/download?format=txt|json|srt
 
+# Transcripción asíncrona (v2) — 202 inmediato, el resultado se consulta luego
+POST   /api/v1/jobs                   Encolar audio → {job_id, status_url}
+GET    /api/v1/jobs/{job_id}          Estado: queued | processing | done | failed (+ texto)
+
 # Streaming
 WS     /ws/stream?token=<jwt>&sample_rate=<hz>   Streaming en tiempo real (WebSocket)
 ```
+
+> **Arquitectura v2** (`docs/09-arquitectura-v2.md`): validación local del JWT en el
+> gateway, Redis (cola de trabajos + revocaciones), *micro-batching* con prioridades y
+> control de admisión en asr-service, adaptación guiada por la cola, soporte de GPU
+> (`docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d`) y worker
+> GPU híbrido (`docker-compose.worker.yml`). Experimentos v2: `docs/10-experimentos-v2.md`.
 
 ---
 

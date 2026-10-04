@@ -1,0 +1,40 @@
+# GPU override — use together with the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# Requires an NVIDIA driver on the host and GPU support in Docker Desktop
+# (WSL2 backend) or the NVIDIA Container Toolkit on Linux. The images need no
+# change: torch==2.4.1 from PyPI on linux/x86_64 already ships the CUDA 12.1
+# runtime as pip wheels; the container only needs the device exposed.
+#
+# DEVICE is only the STARTUP device. With ADAPTIVE_MODE=true the
+# device_manager can still migrate between cpu and cuda at runtime (and falls
+# back to cpu after repeated CUDA OOMs). Pin it with FORCE_DEVICE for clean
+# per-device runs (E8).
+#
+# The monolith gets the GPU too, so the E3 comparison stays symmetric
+# (same hardware for both architectures).
+services:
+  asr-service:
+    environment:
+      - DEVICE=${DEVICE:-cuda}
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  monolith-baseline:
+    environment:
+      - DEVICE=${MONOLITH_DEVICE:-cuda}
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

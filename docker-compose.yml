@@ -4,7 +4,7 @@ services:
   api-gateway:
     build: ./services/api-gateway
     ports:
-      - "8000:8000"
+      - "${GATEWAY_PORT:-8000}:8000"
     environment:
       - SERVICE_NAME=api-gateway
       - AUTH_SERVICE_URL=http://auth-service:8000
@@ -12,7 +12,16 @@ services:
       - AUDIO_PROCESSOR_URL=http://audio-processor:8000
       - ASR_SERVICE_URL=http://asr-service:8000
       - TRANSCRIPTION_MANAGER_URL=http://transcription-manager:8000
+      # v2: validate JWTs locally (auth-service off the critical path). Set
+      # AUTH_MODE=remote to reproduce the v1 behaviour for ablation runs.
+      - AUTH_MODE=${AUTH_MODE:-local}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-changeme_in_production}
+      - REDIS_URL=redis://redis:6379/0
+      - REVOCATION_FAIL_OPEN=${REVOCATION_FAIL_OPEN:-true}
+      - TRANSCRIBE_TIMEOUT=${GATEWAY_TRANSCRIBE_TIMEOUT:-120}
     depends_on:
+      redis:
+        condition: service_healthy
       auth-service:
         condition: service_healthy
       user-service:
@@ -27,7 +36,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
-    restart: on-failure
+    restart: ${RESTART_POLICY:-unless-stopped}
 
   # ── AUTH SERVICE ─────────────────────────────────────────────────────────────
   auth-service:
@@ -44,6 +53,7 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM=${SMTP_FROM:-noreply@asr-quechua.com}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:4200}
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       auth-db:
         condition: service_healthy
@@ -53,7 +63,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
-    restart: on-failure
+    restart: ${RESTART_POLICY:-unless-stopped}
 
   # ── USER SERVICE ─────────────────────────────────────────────────────────────
   user-service:
@@ -81,7 +91,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
-    restart: on-failure
+    restart: ${RESTART_POLICY:-unless-stopped}
 
   # ── AUDIO PROCESSOR ──────────────────────────────────────────────────────────
   audio-processor:
@@ -93,6 +103,8 @@ services:
       - DATABASE_URL=postgresql+asyncpg://audio_user:audio_pass@audio-db:5432/audio_db
       - ASR_SERVICE_URL=http://asr-service:8000
       - STORAGE_URL=${STORAGE_URL:-local}
+      - REDIS_URL=redis://redis:6379/0
+      - ASR_TIMEOUT_SECONDS=${ASR_TIMEOUT_SECONDS:-110}
     volumes:
       - asr_audio:/tmp/asr_audio
     depends_on:
@@ -104,7 +116,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
-    restart: on-failure
+    restart: ${RESTART_POLICY:-unless-stopped}
 
   # ── ASR SERVICE ──────────────────────────────────────────────────────────────
   # Nota: el primer build descarga whisper-medium (~1.5 GB).
@@ -123,6 +135,16 @@ services:
       - ADAPTIVE_MODE=${ADAPTIVE_MODE:-true}
       - FORCE_DEVICE=${FORCE_DEVICE:-}
       - FORCE_COMPUTE_TYPE=${FORCE_COMPUTE_TYPE:-}
+      - FORCE_BATCH_SIZE=${FORCE_BATCH_SIZE:-}
+      - BATCH_SIZE_GPU=${BATCH_SIZE_GPU:-8}
+      - MAX_BATCH_SIZE=${MAX_BATCH_SIZE:-16}
+      - MAX_QUEUE_DEPTH=${MAX_QUEUE_DEPTH:-64}
+      - ADMISSION_MAX_WAIT_SECONDS=${ADMISSION_MAX_WAIT_SECONDS:-60}
+      - INFERENCE_TIMEOUT_SECONDS=${INFERENCE_TIMEOUT_SECONDS:-100}
+      - AUTH_MODE=${AUTH_MODE:-local}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-changeme_in_production}
+      - REDIS_URL=redis://redis:6379/0
+      - JOB_WORKER_ENABLED=${JOB_WORKER_ENABLED:-true}
     volumes:
       - asr_audio:/tmp/asr_audio
     mem_limit: 4g
@@ -136,7 +158,7 @@ services:
       timeout: 30s
       retries: 5
       start_period: 120s
-    restart: on-failure
+    restart: ${RESTART_POLICY:-unless-stopped}
 
   # ── TRANSCRIPTION MANAGER ────────────────────────────────────────────────────
   transcription-manager:
@@ -155,7 +177,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
-    restart: on-failure
+    restart: ${RESTART_POLICY:-unless-stopped}
 
   # ── MONOLITH BASELINE (E3 experimental control) ────────────────────────────
   # Single process/container: auth + audio validation + ASR + persistence,
@@ -186,7 +208,26 @@ services:
       timeout: 30s
       retries: 5
       start_period: 120s
-    restart: on-failure
+    restart: ${RESTART_POLICY:-unless-stopped}
+
+  # ── REDIS (v2) ───────────────────────────────────────────────────────────────
+  # Job queue (Redis Streams), job status store, and the token revocation
+  # mirror the gateway reads in AUTH_MODE=local. Not a source of truth for
+  # anything durable: transcriptions still live in trans-db. AOF on so queued
+  # jobs survive a Redis restart (E6 scenario).
+  redis:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: ${RESTART_POLICY:-unless-stopped}
 
   # ── BASES DE DATOS ───────────────────────────────────────────────────────────
   auth-db:
@@ -267,3 +308,4 @@ volumes:
   asr_audio:
   monolith_db_data:
   monolith_audio:
+  redis_data:

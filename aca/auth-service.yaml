@@ -46,6 +46,8 @@ properties:
             value: CHANGE_ME
           - name: FRONTEND_URL
             value: https://asr-quechua-frontend-b722a.web.app
+          - name: REDIS_URL
+            value: redis://redis:6379/0
     # Horizontal autoscaling — added after E4 showed auth-service (fixed at
     # 1 replica) becomes the real bottleneck under load: api-gateway calls
     # POST /internal/auth/validate-token synchronously on every authenticated

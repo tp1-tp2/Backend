@@ -4,7 +4,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = {"protected_namespaces": ("settings_",), "env_file": ".env"}
+    # env_ignore_empty: compose passes unset knobs as "" (e.g. FORCE_BATCH_SIZE=)
+    model_config = {"protected_namespaces": ("settings_",), "env_file": ".env", "env_ignore_empty": True}
 
     service_name: str = "asr-service"
     version: str = "1.0.0"
@@ -20,11 +21,67 @@ class Settings(BaseSettings):
     # keeps running and logging what it WOULD have decided, it just never applies it.
     force_device: Optional[str] = None  # "cpu" | "cuda"
     force_compute_type: Optional[str] = None  # "fp32" | "fp16" | "int8"
-    adaptation_check_interval_seconds: int = 20
-    adaptation_cooldown_seconds: int = 60
+    # Shortened from 20s/60s: with 180s load steps the old loop needed ~2 min
+    # (3 polls x 20s + 60s cooldown) to react at all (E4 finding, C2.3).
+    adaptation_check_interval_seconds: int = 5
+    adaptation_cooldown_seconds: int = 30
     adaptation_hysteresis_checks: int = 3
     gpu_vram_headroom_gb: float = 1.0
     cpu_high_pressure_percent: float = 85.0
+    # Queue-aware signal: E4 showed saturation surfaces as queueing in front of
+    # the single inference worker, not as CPU% — so queue depth is now the
+    # primary pressure signal for the policy (see device_manager.evaluate_policy).
+    queue_pressure_depth: int = 4
+    # Repeated CUDA OOMs within the window push the policy back to CPU.
+    oom_cpu_fallback_events: int = 3
+    oom_window_seconds: int = 120
+    # Guarded adaptation: a precision downgrade made for speed (fp32 -> fp16/
+    # int8) is kept only if it MEASURABLY lowers the model cost per clip. After
+    # `adaptation_probation_items` clips in the new state, it is rolled back if
+    # it is not at least `adaptation_min_gain` cheaper (E9 found dynamic int8
+    # 2x SLOWER than fp32 on the evaluation CPU).
+    adaptation_probation_items: int = 5
+    adaptation_min_gain: float = 0.05
+
+    # --- Inference scheduler: micro-batching + priorities + admission control ---
+    # See app/services/inference_scheduler.py and docs/09-arquitectura-v2.md.
+    batch_window_ms: int = 25
+    max_batch_size: int = 16  # hard ceiling; the adaptive policy picks the effective size
+    batch_size_cpu: int = 1
+    batch_size_gpu: int = 8
+    # Pin the batch size for clean ablation runs (E8); None = adaptive.
+    force_batch_size: Optional[int] = None
+    # Admission control for synchronous requests: reject fast (503 +
+    # Retry-After) instead of queueing a request that would wait past its
+    # timeout anyway. A request is rejected if the queue is deeper than
+    # max_queue_depth OR its estimated wait exceeds admission_max_wait_seconds.
+    max_queue_depth: int = 64
+    admission_max_wait_seconds: float = 60.0
+    # Live partials are best-effort: shed them when the queue is this deep.
+    partial_shed_depth: int = 4
+    inference_timeout_seconds: float = 100.0  # < audio-processor's 110s < gateway's 120s
+    retry_after_seconds: int = 5
+    target_sample_rate: int = 16000
+
+    # --- Asynchronous job worker (Redis Streams consumer group) ---
+    redis_url: str = ""
+    job_worker_enabled: bool = False
+    job_stream: str = "asr:jobs"
+    job_group: str = "asr-workers"
+    job_worker_concurrency: int = 16
+    job_inference_timeout_seconds: float = 600.0
+    # A pending job whose worker stopped heartbeating for this long is
+    # re-claimed by another worker (at-least-once delivery after a crash).
+    job_claim_idle_ms: int = 30_000
+    job_max_attempts: int = 3
+    job_result_ttl_seconds: int = 86_400
+
+    # --- Token validation for the WebSocket endpoint (same modes as gateway) ---
+    auth_mode: str = "local"  # "local" | "remote"
+    jwt_secret_key: str = "changeme_in_production"
+    jwt_algorithm: str = "HS256"
+
+    persist_retries: int = 3
 
     auth_service_url: str = "http://auth-service:8000"
     transcription_manager_url: str = "http://transcription-manager:8000"
