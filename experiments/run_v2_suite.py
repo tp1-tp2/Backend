@@ -179,7 +179,10 @@ def ensure_users(host: str, out: Path, count: int) -> Path:
 def v2_env(a) -> dict:
     """The full v2 configuration for this host."""
     if not CPU_ONLY:
-        return V2_GPU
+        env = dict(V2_GPU)
+        if a.edge_inflight_gpu:  # calibrated from S3 (docs/15): X_sat x R_sat
+            env["EDGE_MAX_INFLIGHT_TRANSCRIBE"] = str(a.edge_inflight_gpu)
+        return env
     env = {**V2_CPU_CT2, "INFERENCE_LANES": str(a.lanes), "CT2_CPU_THREADS": str(a.threads),
            "EDGE_MAX_INFLIGHT_TRANSCRIBE": str(a.edge_inflight)}
     if a.compute_type:
@@ -189,6 +192,11 @@ def v2_env(a) -> dict:
 
 def e3_env(a) -> dict:
     env = dict(v2_env(a))
+    if not CPU_ONLY:
+        # Same device and precision in both architectures (the monolith has no
+        # adaptation): pin cuda/fp32 so E3 isolates the architectural style.
+        env.update({"FORCE_DEVICE": "cuda", "FORCE_COMPUTE_TYPE": "fp32",
+                    "MONOLITH_DEVICE": "cuda", "MONOLITH_COMPUTE_TYPE": "fp32"})
     if CPU_ONLY:
         # Same engine, precision and lanes in both architectures: E3 isolates
         # the architectural style, not the inference engine.
@@ -237,8 +245,11 @@ def phase_e9(a) -> None:
 def phase_e4(a) -> None:
     runs = [("S1-v1-cpu-sync", V1_CPU, False, "sync"),
             ("S2-v2-cpu-sync", V2_CPU, False, "sync"),
-            ("S3-v2-gpu-sync", V2_GPU, True, "sync"),
-            ("S4-v2-gpu-async", V2_GPU, True, "async")]
+            ("S3-v2-gpu-sync", V2_GPU, True, "sync"),               # v2 GPU without edge admission (calibration + ablation)
+            ("S3c-v2-gpu-sync-edge", v2_env(a), True, "sync"),      # full v2 on GPU (needs --edge-inflight-gpu)
+            ("S4-v2-gpu-async", v2_env(a), True, "async")]
+    if not CPU_ONLY and not a.edge_inflight_gpu:
+        runs = [r for r in runs if r[0] != "S3c-v2-gpu-sync-edge"]
     if CPU_ONLY:
         no_edge = {**v2_env(a), "EDGE_MAX_INFLIGHT_TRANSCRIBE": "0"}
         runs = [("S1-v1-cpu-sync", V1_CPU, False, "sync"),
@@ -403,6 +414,8 @@ def main() -> None:
                     help="Host without an NVIDIA GPU: CPU matrix/scenarios (docs/14-optimizacion-cpu.md)")
     ap.add_argument("--lanes", type=int, default=3, help="--cpu-only: inference lanes for v2")
     ap.add_argument("--threads", type=int, default=2, help="--cpu-only: CTranslate2 threads per lane")
+    ap.add_argument("--edge-inflight-gpu", type=int, default=0,
+                    help="GPU host: edge admission cap, calibrated from S3 as X_sat x R_sat (0 = skip S3c)")
     ap.add_argument("--edge-inflight", type=int, default=10,
                     help="--cpu-only: gateway edge admission cap = X_sat x R_sat (Little; S2: 0.84 req/s x 12 s = 10). 6 over-throttled (ablation)")
     ap.add_argument("--compute-type", default=None, help="--cpu-only: pin v2 precision (fp32|int8)")
