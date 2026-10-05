@@ -19,6 +19,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - REVOCATION_FAIL_OPEN=${REVOCATION_FAIL_OPEN:-true}
       - TRANSCRIBE_TIMEOUT=${GATEWAY_TRANSCRIBE_TIMEOUT:-120}
+      # Edge admission (docs/16): max sync /transcribe in flight, 0 = off
+      - EDGE_MAX_INFLIGHT_TRANSCRIBE=${EDGE_MAX_INFLIGHT_TRANSCRIBE:-0}
     depends_on:
       redis:
         condition: service_healthy

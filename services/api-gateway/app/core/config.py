@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     transcribe_timeout: float = 120.0
     auth_validate_timeout_seconds: float = 5.0
     retry_after_seconds: int = 5
+    # Edge admission control (app/core/edge_admission.py): max synchronous
+    # /transcribe requests in flight across all gateway workers. 0 = disabled
+    # (v1 behaviour). Derive it from capacity: throughput x target response time.
+    edge_max_inflight_transcribe: int = 0
 
     # --- Token validation (see app/core/token_validator.py) ---
     auth_mode: str = "local"  # "local" | "remote"

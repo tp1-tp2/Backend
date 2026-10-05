@@ -110,7 +110,7 @@ def compose(files, env_overrides: dict, *args: str) -> None:
     for key in set(V1_CPU) | {"FORCE_COMPUTE_TYPE", "FORCE_BATCH_SIZE", "ADAPTIVE_MODE",
                               "MONOLITH_DEVICE", "ENGINE", "INFERENCE_LANES", "CT2_CPU_THREADS",
                               "MONOLITH_ENGINE", "MONOLITH_COMPUTE_TYPE", "MONOLITH_LANES",
-                              "MONOLITH_CT2_CPU_THREADS"}:
+                              "MONOLITH_CT2_CPU_THREADS", "EDGE_MAX_INFLIGHT_TRANSCRIBE"}:
         env.pop(key, None)
     env.update(env_overrides)
     subprocess.run(["docker", "compose", *files, *args], cwd=ROOT, env=env, check=True)
@@ -136,6 +136,11 @@ def _ok(url: str) -> bool:
 
 def apply_config(env: dict, gpu: bool, services: list[str] | None = None) -> None:
     files = GPU_FILES if (gpu and not CPU_ONLY) else BASE_FILES
+    # Fresh-deployment hygiene: Redis persists (AOF) across recreates, so drop
+    # edge-admission slots left by requests the previous run's load generator
+    # abandoned when it stopped.
+    subprocess.run(["docker", "exec", "backend-redis-1", "redis-cli", "DEL", "gw:sync_transcribe_inflight"],
+                   capture_output=True)
     compose(files, env, "up", "-d", "--force-recreate", "--no-build", *(services or []))
     wait_ready(["http://localhost:8004/ready"] if services == ["asr-service"]
                else [f"{GW}/health", "http://localhost:8004/ready"])
@@ -160,7 +165,8 @@ def v2_env(a) -> dict:
     """The full v2 configuration for this host."""
     if not CPU_ONLY:
         return V2_GPU
-    env = {**V2_CPU_CT2, "INFERENCE_LANES": str(a.lanes), "CT2_CPU_THREADS": str(a.threads)}
+    env = {**V2_CPU_CT2, "INFERENCE_LANES": str(a.lanes), "CT2_CPU_THREADS": str(a.threads),
+           "EDGE_MAX_INFLIGHT_TRANSCRIBE": str(a.edge_inflight)}
     if a.compute_type:
         env["FORCE_COMPUTE_TYPE"] = a.compute_type
     return env
@@ -219,13 +225,15 @@ def phase_e4(a) -> None:
             ("S3-v2-gpu-sync", V2_GPU, True, "sync"),
             ("S4-v2-gpu-async", V2_GPU, True, "async")]
     if CPU_ONLY:
+        no_edge = {**v2_env(a), "EDGE_MAX_INFLIGHT_TRANSCRIBE": "0"}
         runs = [("S1-v1-cpu-sync", V1_CPU, False, "sync"),
-                ("S2-v2-cpu-sync", v2_env(a), False, "sync"),
-                ("S2b-v2-cpu-async", v2_env(a), False, "async")]
+                ("S2-v2-cpu-sync", no_edge, False, "sync"),          # v2 without edge admission (ablation)
+                ("S2b-v2-cpu-async", v2_env(a), False, "async"),
+                ("S2c-v2-cpu-sync-edge", v2_env(a), False, "sync")]  # full v2
     if a.e4_only:
         runs = [r for r in runs if r[0] in a.e4_only]
     for label, env, gpu, mode in runs:
-        for rep in range(1, a.repeats + 1):
+        for rep in range(a.rep_from, a.repeats + 1):
             tag = f"e4v2_{label}_r{rep}"
             log(f"E4 {tag}")
             apply_config(env, gpu=gpu)
@@ -250,16 +258,19 @@ def phase_e4(a) -> None:
 
 
 def _redis_backlog() -> int | None:
-    """lag + pending of the job consumer group (same definition as
-    audio-processor's job_queue.backlog)."""
-    out = subprocess.run(["docker", "exec", "backend-redis-1", "redis-cli", "XINFO", "GROUPS", "asr:jobs"],
-                         capture_output=True, text=True).stdout.splitlines()
-    try:  # key/value lines; nil values come back as empty lines, so keep them
-        vals = dict(zip(out[::2], out[1::2]))
-        if not vals.get("lag"):  # lag unknown: fall back to "anything pending/undelivered"
-            return int(vals.get("pending") or 0)
-        return int(vals["lag"]) + int(vals.get("pending") or 0)
-    except ValueError:
+    """Undelivered + pending jobs, counted exactly (same rule as
+    audio-processor's job_queue.backlog; XINFO `lag` is not trusted)."""
+    def cli(*args):
+        return subprocess.run(["docker", "exec", "backend-redis-1", "redis-cli", *args],
+                              capture_output=True, text=True).stdout.splitlines()
+    try:
+        info = cli("XINFO", "GROUPS", "asr:jobs")
+        vals = dict(zip(info[::2], info[1::2]))
+        last = vals.get("last-delivered-id") or "0-0"
+        undelivered = [x for x in cli("XRANGE", "asr:jobs", f"({last}", "+") if x.strip()]
+        # XRANGE prints id + field + value per entry
+        return len(undelivered) // 3 + int(vals.get("pending") or 0)
+    except (ValueError, IndexError):
         return None
 
 
@@ -270,23 +281,31 @@ def job_completion(raw: Path, out: Path, timeout_s: float = 1800.0) -> None:
     import csv
     import json
 
-    t0 = time.time()
-    backlog = _redis_backlog()
-    while (backlog is None or backlog > 0) and time.time() - t0 < timeout_s:
-        time.sleep(5)
-        backlog = _redis_backlog()
-    drain_s = time.time() - t0
     accepted = submitted = 0
     with open(raw, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             if row.get("name") == "/api/v1/jobs":
                 submitted += 1
-                accepted += str(row.get("status")) == "202"
-    worker = {}
-    try:
-        worker = httpx.get("http://localhost:8004/status/scheduler", timeout=10).json().get("job_worker", {})
-    except Exception as exc:
-        worker = {"error": str(exc)}
+                accepted += str(row.get("status")).split(".")[0] == "202"
+
+    def _worker() -> dict:
+        try:
+            return httpx.get("http://localhost:8004/status/scheduler", timeout=10).json().get("job_worker", {})
+        except Exception:
+            return {}
+
+    # Drained when every accepted job reached a terminal state and the worker
+    # is idle. (Redis' XINFO `lag` proved unreliable for this, see job_queue.)
+    t0 = time.time()
+    w = _worker()
+    while time.time() - t0 < timeout_s and not (
+        w and w.get("active", 1) == 0 and (w.get("processed", 0) + w.get("failed", 0)) >= accepted
+    ):
+        time.sleep(5)
+        w = _worker()
+    drain_s = time.time() - t0
+    backlog = _redis_backlog()
+    worker = _worker()
     result = {
         "submitted": submitted, "accepted": accepted,
         "acceptance_rate": accepted / submitted if submitted else None,
@@ -357,6 +376,7 @@ def main() -> None:
     ap.add_argument("--audio-seconds", type=float, default=None)
     ap.add_argument("--manifest", default=None, help="E8 only: cycle real clips + WER control")
     ap.add_argument("--repeats", type=int, default=1)
+    ap.add_argument("--rep-from", type=int, default=1, help="E4: first repetition to run (resume)")
     ap.add_argument("--steps", default="10,50,100,200,500,1000")
     ap.add_argument("--step-seconds", type=int, default=180)
     ap.add_argument("--e8-seconds", type=int, default=60)
@@ -366,6 +386,8 @@ def main() -> None:
                     help="Host without an NVIDIA GPU: CPU matrix/scenarios (docs/14-optimizacion-cpu.md)")
     ap.add_argument("--lanes", type=int, default=3, help="--cpu-only: inference lanes for v2")
     ap.add_argument("--threads", type=int, default=2, help="--cpu-only: CTranslate2 threads per lane")
+    ap.add_argument("--edge-inflight", type=int, default=10,
+                    help="--cpu-only: gateway edge admission cap = X_sat x R_sat (Little; S2: 0.84 req/s x 12 s = 10). 6 over-throttled (ablation)")
     ap.add_argument("--compute-type", default=None, help="--cpu-only: pin v2 precision (fp32|int8)")
     ap.add_argument("--e8-only", nargs="*", default=None, help="Subset of E8 labels")
     ap.add_argument("--e4-only", nargs="*", default=None, help="Subset of E4 run labels")

@@ -48,18 +48,27 @@ async def _ensure_group(client) -> None:
 
 
 async def backlog() -> int:
-    """Jobs not yet finished by any worker: undelivered (lag) + in progress
-    (pending). Falls back to XLEN when the server doesn't report lag."""
+    """Jobs not yet finished by any worker: undelivered + in progress (pending).
+
+    Undelivered entries are COUNTED (XRANGE after the group's last-delivered
+    id, capped at job_max_backlog + 1) instead of trusting XINFO's `lag`: E4 v2
+    showed `lag` reporting 1197 waiting jobs on a stream that was fully
+    consumed (pending 0, worker idle), which inflated this backlog, the queue
+    admission check and the drain wait. `lag` is an estimate Redis may leave
+    stale; the id range is exact.
+    """
     client = _client()
     await _ensure_group(client)
     for group in await client.xinfo_groups(settings.job_stream):
         name = group.get("name") or group.get(b"name")
         if name in (settings.job_group, settings.job_group.encode()):
-            lag = group.get("lag") if "lag" in group else group.get(b"lag")
             pending = group.get("pending") if "pending" in group else group.get(b"pending")
-            if lag is None:
-                lag = await client.xlen(settings.job_stream)
-            return int(lag or 0) + int(pending or 0)
+            last = group.get("last-delivered-id") or group.get(b"last-delivered-id") or b"0-0"
+            last = last.decode() if isinstance(last, bytes) else str(last)
+            undelivered = await client.xrange(
+                settings.job_stream, min=f"({last}", max="+", count=settings.job_max_backlog + 1
+            )
+            return len(undelivered) + int(pending or 0)
     return 0
 
 

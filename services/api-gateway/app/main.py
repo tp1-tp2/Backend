@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -15,6 +16,7 @@ from app.api.routes import (
     users_router,
 )
 from app.api.dependencies import build_http_client
+from app.core import edge_admission
 from app.core.redis_client import close_redis, get_redis
 from app.core.config import settings
 from app.core.response import error_response
@@ -43,6 +45,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def edge_admission_middleware(request: Request, call_next):
+    """Reject excess synchronous transcriptions at the edge, before the upload
+    is read or forwarded (docs/16, E4 v2 finding)."""
+    if request.method != "POST" or request.url.path != "/api/v1/transcribe" or not edge_admission.enabled():
+        return await call_next(request)
+    admitted, slot = await edge_admission.try_acquire()
+    if not admitted:
+        return error_response(
+            "SYSTEM_003", "Transcription capacity reached, retry later", 503,
+            headers={"Retry-After": str(settings.retry_after_seconds)},
+        )
+    try:
+        return await call_next(request)
+    finally:
+        # Shielded: if the client disconnects, this task is cancelled and an
+        # unshielded await here would be cancelled too, leaking the slot until
+        # it goes stale (E4 v2: leaked slots throttled the next run's start).
+        await asyncio.shield(edge_admission.release(slot))
+
 
 app.include_router(auth_router)
 app.include_router(users_router)
