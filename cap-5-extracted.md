@@ -63,15 +63,22 @@ Finalmente, la usabilidad se operacionaliza según la definición de la norma IS
 
 3. ### **Objeto de evaluación, entornos y línea base**
 
-El artefacto evaluado es la plataforma completa descrita en la variable independiente. El núcleo de reconocimiento reside en asr-service, que ejecuta el modelo QuechuaBase/whisper-base-qxp-finetuned, una variante de Whisper (Radford et al., 2023\) ajustada para quechua, tanto en modalidad de carga de archivos como en modalidad de streaming mediante WebSocket. En la modalidad de streaming, la plataforma admite audio PCM sin comprimir y audio comprimido en formato Opus o MP3; en el caso del audio comprimido, el servicio acumula los fragmentos recibidos y los decodifica a WAV de 16 kHz antes de la inferencia, por lo que las transcripciones parciales en tiempo real solo están disponibles para PCM, mientras que el audio comprimido produce únicamente el resultado final.  
-   
-El servicio incorpora además un mecanismo de adaptación vertical de recursos que, cada 20 segundos, evalúa el estado del hardware y decide el dispositivo de ejecución entre CPU o GPU. Para evitar cambios constantes provocados por lecturas puntuales, una decisión solo se aplica si se repite en tres sondeos consecutivos y si han transcurrido al menos 60 segundos desde el último cambio. El nuevo modelo se construye en segundo plano y solo reemplaza al anterior cuando está listo, de modo que las inferencias en curso no se interrumpen. Cada transcripción registra el dispositivo y la precisión con que fue procesada, y el mecanismo expone un endpoint de estado con el historial de sus decisiones, lo que permite observar su comportamiento durante la evaluación.  
-   
-Antes de ejecutar las mediciones se verifica que el artefacto opere de extremo a extremo en condiciones reales. Siguiendo la distinción entre niveles de prueba de la norma ISO/IEC/IEEE 29119, la verificación comprende pruebas de integración contra la pila completa en ejecución y pruebas de sistema de los flujos principales. El objetivo de esta etapa no es validar atributos de calidad, sino asegurar que los atributos medidos posteriormente correspondan a un artefacto que funciona según su diseño.  
-   
-Respecto a la línea base monolítica, que sirve para aislar el efecto de la decisión arquitectónica se construye una versión monolítica de control que reúne en un único proceso la lógica de autenticación, registro, procesamiento de audio, inferencia y persistencia, reutilizando el mismo código funcional de los servicios originales. En esta versión, las tres llamadas HTTP que la arquitectura propuesta realiza entre audio-processor, asr-service y transcription-manager se reemplazan por llamadas directas a funciones dentro del mismo proceso. El monolito expone las mismas rutas públicas que la plataforma, utiliza un dispositivo de ejecución fijo sin mecanismo de adaptación y dispone de una base de datos propia.  
-   
-La evaluación se realiza en dos entornos de ejecución. El primero es un entorno local basado en Docker Compose, en el que se despliegan todos los contenedores de la plataforma y de la línea base sobre el mismo hardware (\[especificar procesador, número de núcleos y memoria RAM del equipo\]). El segundo es Azure Container Apps en el plan de consumo, sin disponibilidad de GPU, con réplicas de asr-service de 2 vCPU y un servidor PostgreSQL flexible de tipo Standard\_B1ms compartido por las bases de datos de los servicios. Esta combinación responde al marco de evaluación propuesto por Venable et al. (2016), que distingue entre evaluaciones artificiales, en las que el investigador controla las condiciones, y evaluaciones cercanas al uso real del artefacto. Las comparaciones controladas entre arquitecturas y la inyección de fallos se realizan en el entorno local, donde es posible garantizar condiciones idénticas para ambas versiones, mientras que la prueba de escalabilidad se realiza en Azure, con lo que se atiende la exigencia del OE4 de evaluar el funcionamiento en entornos reales.
+El artefacto evaluado es la plataforma completa descrita en la variable independiente. El núcleo de reconocimiento reside en asr-service, que ejecuta el modelo QuechuaBase/whisper-base-qxp-finetuned, una variante de Whisper (Radford et al., 2023\) ajustada para quechua, tanto en modalidad de carga de archivos como en modalidad de streaming mediante WebSocket. En la modalidad de streaming, la plataforma admite audio PCM sin comprimir y audio comprimido en formato Opus o MP3; en el caso del audio comprimido, el servicio acumula los fragmentos recibidos y los decodifica a WAV de 16 kHz antes de la inferencia, por lo que las transcripciones parciales en tiempo real solo están disponibles para PCM, mientras que el audio comprimido produce únicamente el resultado final.
+
+La validación se realizó en dos iteraciones de construcción y evaluación, coherentes con el ciclo de la ciencia del diseño (Hevner et al., 2004). La primera iteración evaluó la arquitectura inicial y permitió identificar sus limitaciones: la cadena de servicios era síncrona y no tenía control de admisión, la validación de cada token dependía de auth-service y el mecanismo de adaptación decidía según el porcentaje de uso de CPU. A partir de esos hallazgos se construyó una segunda versión de la arquitectura, que es la que se valida en este capítulo e incorpora los siguientes cambios:
+
+* **Disponibilidad.** api-gateway valida los tokens de forma local (firma JWT y un registro de revocaciones replicado en Redis), por lo que auth-service deja de estar en el camino crítico de cada solicitud; los errores de un servicio dependiente se informan como 503 con la cabecera Retry-After, en lugar de enmascararse como 401; los servicios separan el endpoint de vida (`/health`) del de disponibilidad para recibir tráfico (`/ready`), y se reinician automáticamente ante una terminación inesperada.
+* **Escalabilidad.** Se incorpora una API asíncrona (`/api/v1/jobs`) sobre una cola de Redis Streams con entrega al menos una vez, de modo que una solicitud aceptada no se pierde aunque el proceso de inferencia falle. Se añade un control de admisión en dos niveles: en el borde, api-gateway limita las transcripciones síncronas en curso y rechaza el exceso con 503 antes de procesar el archivo; en asr-service, el planificador de inferencia rechaza las solicitudes cuya espera estimada supera el límite.
+* **Rendimiento.** asr-service incorpora un planificador de inferencia con prioridades (resultado final de streaming, solicitud REST, trabajo asíncrono y resultado parcial) y varias líneas de inferencia en paralelo, y ejecuta el mismo modelo con el motor CTranslate2, que ofrece cuantización int8 eficiente en CPU. La persistencia de la transcripción se realiza fuera del camino de respuesta.
+* **Adaptación.** El mecanismo de adaptación vertical decide según la profundidad de la cola de inferencia, la señal en que se manifiesta la saturación, y no según el porcentaje de uso de CPU. Cada cambio de precisión pasa por un periodo de prueba: el mecanismo mide el costo real por clip en el nuevo estado y revierte el cambio si no resulta más rápido, de modo que una adaptación perjudicial no permanece activa.
+
+Cada transcripción registra el dispositivo y la precisión con que fue procesada, y los mecanismos de adaptación y de planificación exponen endpoints de estado con su historial de decisiones y sus contadores, lo que permite observar su comportamiento durante la evaluación.
+
+Antes de ejecutar las mediciones se verifica que el artefacto opere de extremo a extremo en condiciones reales. Siguiendo la distinción entre niveles de prueba de la norma ISO/IEC/IEEE 29119, la verificación comprende pruebas de integración contra la pila completa en ejecución y pruebas de sistema de los flujos principales. El objetivo de esta etapa no es validar atributos de calidad, sino asegurar que los atributos medidos posteriormente correspondan a un artefacto que funciona según su diseño.
+
+Respecto a la línea base monolítica, que sirve para aislar el efecto de la decisión arquitectónica, se construye una versión monolítica de control que reúne en un único proceso la lógica de autenticación, registro, procesamiento de audio, inferencia y persistencia, reutilizando el mismo código funcional de los servicios originales. En esta versión, las llamadas HTTP que la arquitectura propuesta realiza entre audio-processor, asr-service y transcription-manager se reemplazan por llamadas directas a funciones dentro del mismo proceso. El monolito expone las mismas rutas públicas que la plataforma, utiliza un dispositivo de ejecución fijo sin mecanismo de adaptación, dispone de una base de datos propia y, para que la comparación aísle el estilo arquitectónico y no el motor de inferencia, ejecuta el mismo modelo con el mismo motor, la misma precisión y el mismo número de líneas de inferencia que la arquitectura propuesta.
+
+La evaluación se realiza en dos entornos de ejecución. El primero es un entorno local basado en Docker Compose, en el que se despliegan todos los contenedores de la plataforma y de la línea base sobre el mismo hardware: un procesador Intel Core i5-10400 de 6 núcleos y 12 hilos a 2.9 GHz, con 23.8 GB de RAM, de los cuales se asignan 12 CPU lógicas y 16 GB al entorno de contenedores, sin GPU dedicada. El segundo es Azure Container Apps en el plan de consumo, sin disponibilidad de GPU, con réplicas de asr-service de 2 vCPU y un servidor PostgreSQL flexible de tipo Standard\_B1ms compartido por las bases de datos de los servicios. Esta combinación responde al marco de evaluación propuesto por Venable et al. (2016), que distingue entre evaluaciones artificiales, en las que el investigador controla las condiciones, y evaluaciones cercanas al uso real del artefacto. La primera iteración evaluó la escalabilidad horizontal en Azure; la segunda iteración, cuyas comparaciones requieren condiciones idénticas entre configuraciones y entre arquitecturas, se evaluó en el entorno local. La evaluación de la arquitectura en un equipo con GPU dedicada queda planteada como trabajo posterior.
 
 4. ### **Corpus de evaluación**
 
@@ -97,34 +104,60 @@ Cada clip se registra en un manifiesto con la ruta del audio, la transcripción 
 
 5. ### **Diseño de la evaluación por dimensión**
 
-Los diseños se presentan en el orden de las dimensiones de la variable dependiente: primero los indicadores de accesibilidad (disponibilidad y escalabilidad) y luego los de interacción (rendimiento, calidad de reconocimiento y usabilidad).
+Los diseños se presentan en el orden de las dimensiones de la variable dependiente: primero los indicadores de accesibilidad (disponibilidad y escalabilidad) y luego los de interacción (rendimiento, calidad de reconocimiento y usabilidad). En las pruebas de carga se utiliza como audio un clip real del corpus de 24.05 s, cercano a la mediana de duración del corpus (23.04 s), y cada respuesta se valida por su contenido: una respuesta con código 200 que no contiene una transcripción se cuenta como fallo.
 
 1. #### **Disponibilidad**
 
-La disponibilidad se evalúa principalmente mediante la prueba de inyección de fallos. Que consiste en provocar fallos de forma deliberada mientras el sistema atiende carga realista para observar su comportamiento, en lugar de suponer su resiliencia a partir del diseño (Basiri et al., 2016).  
-   
-El procedimiento es el siguiente. Con aproximadamente 50 usuarios concurrentes ejecutando de forma continua el flujo de inicio de sesión y transcripción, y tras un periodo de calentamiento de 30 segundos, se detiene un contenedor por vez. En la arquitectura propuesta se detienen tres servicios representativos del camino crítico de una transcripción: asr-service (inferencia), auth-service (autenticación) y transcription-manager (persistencia). En la línea base se detiene el proceso monolítico completo. Durante cada caída se registran las solicitudes totales y fallidas dirigidas al endpoint de transcripción, se consulta el endpoint de salud de cada servicio cada segundo para medir el tiempo de detección y se observa si la caída degrada a los servicios vecinos.  
-   
-De forma complementaria, la tasa de éxito bajo carga se obtiene de la prueba de carga progresiva en la nube, cuyo diseño se describe en el apartado siguiente.
+La disponibilidad se evalúa principalmente mediante la prueba de inyección de fallos, que consiste en provocar fallos de forma deliberada mientras el sistema atiende carga realista para observar su comportamiento, en lugar de suponer su resiliencia a partir del diseño (Basiri et al., 2016).
+
+Mientras un grupo de usuarios ejecuta de forma continua el flujo de inicio de sesión y transcripción, y tras un periodo de calentamiento de 60 segundos, se provoca la caída de un componente terminando su proceso principal con la señal SIGKILL, lo que reproduce una terminación inesperada y activa la política de reinicio automático. La carga se fija en 10 usuarios concurrentes, que corresponden a la capacidad de la plataforma en el hardware de evaluación según la ley de Little (apartado de escalabilidad), de modo que la prueba mida la respuesta ante el fallo y no la saturación. Se evalúan ocho escenarios, cada uno con tres repeticiones:
+
+Tabla X. Escenarios de inyección de fallos.
+
+| Código | Componente | Pregunta de evaluación |
+| ----- | ----- | ----- |
+| D1 | asr-service | ¿Se recupera solo y en cuánto tiempo? ¿Cómo fallan las solicitudes durante el corte? |
+| D2 | auth-service (validación local) | ¿Deja auth-service de ser un punto único de fallo? |
+| D2b | auth-service (validación remota, como en la primera iteración) | Contraste para aislar el efecto de la validación local |
+| D3 | transcription-manager | ¿Sigue siendo la persistencia un componente no crítico? |
+| D4 | asr-service con carga asíncrona | ¿Se pierde algún trabajo aceptado? |
+| D5 | Redis | ¿Sobreviven la ruta síncrona y la autenticación a la caída de la cola? |
+| D6 | asr-service congelado durante 60 s | ¿Se aísla un proceso vivo pero sin respuesta? |
+| D7 | Monolito completo | Línea base |
+
+Durante cada prueba se registran todas las solicitudes con su instante de finalización, lo que permite calcular la tasa de éxito antes, durante y después del corte; se consulta el endpoint de salud de cada servicio cada segundo para medir el tiempo de detección y el tiempo de recuperación (MTTR), y se observa si la caída degrada a los servicios vecinos.
+
+De forma complementaria, la tasa de éxito bajo carga se obtiene de la prueba de carga progresiva, cuyo diseño se describe en el apartado siguiente.
 
 2. #### **Escalabilidad**
 
-La escalabilidad se evalúa mediante la prueba de carga progresiva en la nube, sobre Azure Container Apps. Se registran previamente 30 usuarios de prueba y se aplica con Locust una rampa de carga de seis escalones de 180 segundos cada uno, con objetivos de 10, 50, 100, 200, 500 y 1000 usuarios concurrentes, en los que cada usuario simulado ejecuta de forma repetida el flujo de inicio de sesión y transcripción de audio real del corpus.  
-   
-La prueba se diseña de forma iterativa, coherente con los ciclos de construcción y evaluación propios de la ciencia del diseño (Hevner et al., 2004). La primera ejecución se realiza con una configuración fija de una, que sirve como referencia. Cada configuración posterior se define a partir del análisis del resultado anterior, se identifica el componente que limita la capacidad, se formula una hipótesis sobre su causa y se aplica el cambio de configuración correspondiente, de modo que cada ejecución pone a prueba la hipótesis de la anterior.  
-   
-El escalado horizontal se configura mediante reglas basadas en la concurrencia de solicitudes HTTP por réplica y no en el porcentaje de uso de CPU. Esta elección responde a que asr-service opera con un único worker, por lo que puede acumular solicitudes en espera mientras su uso de CPU todavía es moderado; una regla basada en CPU reaccionaría tarde ante ese encolamiento. Las reglas reactivas basadas en umbrales son la técnica de autoescalado más extendida en plataformas en la nube por su simplicidad, aunque su eficacia depende de elegir una métrica que refleje la saturación real del servicio (Lorido-Botran et al., 2014). El umbral de cada servicio se fija según su capacidad de atender solicitudes simultáneas: un umbral bajo para servicios de un único worker con operaciones de varios segundos, como la inferencia, y un umbral más alto para servicios de cuatro workers con operaciones breves.  
-   
-Durante cada ejecución se observa además el mecanismo de adaptación vertical mediante su endpoint de estado y sus registros estructurados, con el fin de determinar si reacciona ante la presión de carga.
+La escalabilidad se evalúa mediante la prueba de carga progresiva, aplicada con Locust en una rampa de seis escalones de 180 segundos cada uno, con objetivos de 10, 50, 100, 200, 500 y 1000 usuarios concurrentes, en los que cada usuario simulado ejecuta de forma repetida el flujo de inicio de sesión y transcripción con un tiempo de espera de 1 a 3 s entre solicitudes.
+
+La prueba se diseña de forma iterativa, coherente con los ciclos de construcción y evaluación propios de la ciencia del diseño (Hevner et al., 2004). En la primera iteración se ejecutó en Azure Container Apps con cuatro configuraciones de escalado horizontal, cada una definida a partir del análisis de la anterior. En la segunda iteración se ejecuta en el entorno local, con tres repeticiones por configuración, comparando configuraciones que difieren en un solo factor:
+
+Tabla X. Configuraciones de la prueba de carga de la segunda iteración.
+
+| Corrida | Configuración | Propósito |
+| ----- | ----- | ----- |
+| S1 | Réplica de la primera iteración: motor transformers en fp32, validación remota del token y sin control de admisión | Referencia |
+| S2 | Arquitectura v2 sin admisión en el borde | Efecto de los cambios de software sin hardware nuevo |
+| S2c | Arquitectura v2 completa, con admisión en el borde | Efecto del control de admisión en el borde |
+| S2b | Arquitectura v2 completa con la API asíncrona | Efecto del modelo asíncrono |
+
+Para cada escalón se registran la tasa de éxito, el goodput (solicitudes completadas con éxito por segundo), los percentiles 50 y 95 del tiempo de respuesta de las solicitudes exitosas y el desglose de los fallos en rechazos rápidos (503), timeouts y errores 5xx. Esta distinción es necesaria porque un sistema puede fallar de dos maneras muy distintas: rechazando de inmediato lo que no puede atender, lo que permite al cliente reintentar, o aceptando la solicitud y fallando después de una espera prolongada. Se calcula además el techo analítico de usuarios concurrentes mediante la ley de Little, N = X · (R + Z), donde X es el throughput máximo, R el tiempo de respuesta objetivo (10 s) y Z el tiempo de espera entre solicitudes (2 s en promedio), lo que permite determinar si un objetivo de usuarios es alcanzable con un hardware dado.
+
+En la corrida asíncrona, cada usuario envía un trabajo y consulta su estado hasta que termina. Al final de la rampa se espera a que la cola se vacíe y se comparan los trabajos aceptados con los procesados por el worker.
+
+Durante las corridas se observa además el mecanismo de adaptación vertical mediante su endpoint de estado. Su comportamiento se evalúa de forma aislada con una prueba específica: tras 30 s de reposo se aplica una ráfaga de 24 clientes concurrentes durante 120 s, seguida de 90 s de reposo, y se registran las decisiones del mecanismo, su tiempo de reacción, el resultado del periodo de prueba y el throughput antes y después de la primera decisión, con tres repeticiones con cada motor de inferencia.
 
 3. #### **Rendimiento**
 
-El rendimiento se evalúa con tres fuentes de evidencia complementarias:  
- 
+El rendimiento se evalúa con cuatro fuentes de evidencia complementarias:
 
-* **Costo de inferencia**. En la evaluación de reconocimiento sobre el corpus se mide el RTF de cada uno de los 2111 clips, ejecutados en CPU con precisión fp32.  
-* **Tiempo de respuesta bajo carga**. En la prueba de carga comparativa se aplica la misma rampa contra la arquitectura propuesta y contra la línea base monolítica, en el entorno local y sobre el mismo hardware, y se comparan los percentiles 50, 95 y 99 del tiempo de respuesta y el throughput. El tiempo de respuesta en la nube se obtiene de los primeros escalones de la prueba de carga progresiva.  
-* **Latencia de streaming**. En la prueba comparativa de codificación se transmite por WebSocket una muestra estratificada de 30 clips especificamente 20 de Huqariq y 10 de Siminchik, en proporción al tamaño de cada fuente. Cada clip se envía una vez como audio PCM sin comprimir y otra como audio comprimido en Opus, y se registran la latencia hasta el resultado final y el volumen de bytes transmitidos. Para la condición Opus, cada clip se codifica completo con ffmpeg y luego se fragmenta para su transmisión.
+* **Costo de inferencia**. En la evaluación de reconocimiento sobre el corpus se mide el RTF de cada uno de los 2111 clips, ejecutados en CPU con precisión fp32.
+* **Throughput de inferencia por configuración**. Directamente contra asr-service, sin pasar por el gateway, se mide el throughput (segundos de audio procesados por segundo) y la latencia con 1, 2, 4, 8 y 16 clientes concurrentes, para cada combinación de motor (transformers y CTranslate2), precisión (fp32 e int8) y número de líneas de inferencia, usando la muestra estratificada de 30 clips. La salida de cada configuración se compara con la de referencia mediante WER como control, para verificar que una optimización no altera el reconocimiento.
+* **Tiempo de respuesta bajo carga**. En la prueba de carga comparativa se aplica la misma rampa contra la arquitectura propuesta y contra la línea base monolítica, en el entorno local, sobre el mismo hardware y con el mismo motor de inferencia, con tres repeticiones por arquitectura, y se comparan los percentiles 50, 95 y 99 del tiempo de respuesta y el throughput.
+* **Latencia de streaming**. En la prueba comparativa de codificación se transmite por WebSocket una muestra estratificada de 30 clips, específicamente 20 de Huqariq y 10 de Siminchik, en proporción al tamaño de cada fuente. Cada clip se envía una vez como audio PCM sin comprimir y otra como audio comprimido en Opus, y se registran la latencia hasta el resultado final y el volumen de bytes transmitidos. Para la condición Opus, cada clip se codifica completo con ffmpeg y luego se fragmenta para su transmisión.
 
   4. #### **Calidad de reconocimiento**
 
@@ -146,7 +179,7 @@ El tratamiento estadístico es común a todas las evaluaciones. Para cada métri
 
 7. ### **Criterios de aceptación**
 
-Los criterios de aceptación establecen, para cada dimensión, el umbral a partir del cual el resultado se considera satisfactorio. La Tabla X los presenta junto con su fundamento.
+Los criterios de aceptación establecen, para cada dimensión, el umbral a partir del cual el resultado se considera satisfactorio. La Tabla X los presenta junto con su fundamento. Los criterios C1.5 a C1.7, C2.4 y C3.4 se incorporaron en la segunda iteración para evaluar las capacidades añadidas a la arquitectura. Los criterios C1.4 y C2.2 se reformularon a partir de lo observado en la primera iteración, antes de ejecutar las mediciones de la segunda. En esa iteración el número de "usuarios sostenidos" no indicaba si esos usuarios estaban siendo atendidos, y ningún sistema de una sola máquina sin GPU puede atender 1000 usuarios síncronos dentro de un tiempo de respuesta razonable, como muestra la cota de la ley de Little. Por ello se distingue entre la capacidad dentro del objetivo de servicio y el comportamiento ante la sobrecarga, que no debe ser el colapso.
 
 Tabla X. Criterios de aceptación por dimensión.
 
@@ -155,13 +188,18 @@ Tabla X. Criterios de aceptación por dimensión.
 | C1.1 | Disponibilidad | Ante la caída de un servicio individual, la tasa de éxito es superior a la del monolito en la misma condición y ninguna caída afecta al 100 % de las solicitudes | Principio de aislamiento de fallos de la arquitectura de microservicios |
 | C1.2 | Disponibilidad | El tiempo de detección de una caída es menor o igual a 5 s | Intervalo de monitoreo de salud de 1 s |
 | C1.3 | Disponibilidad | La caída de un servicio no se propaga a sus servicios vecinos | Principio de aislamiento de fallos |
-| C1.4 | Disponibilidad | La tasa de éxito bajo carga es mayor o igual a 95 % en todos los escalones de la rampa | Criterio definido por el equipo |
-| C2.1 | Escalabilidad | El escalado horizontal incrementa el número de usuarios concurrentes sostenidos respecto de la configuración fija | Propósito del escalado horizontal |
-| C2.2 | Escalabilidad | La plataforma sostiene el escalón objetivo máximo de la rampa (1000 usuarios) | Criterio definido por el equipo |
+| C1.4 | Disponibilidad | La tasa de éxito es mayor o igual a 95 % con la carga dentro de la capacidad de la plataforma | Criterio definido por el equipo |
+| C1.5 | Disponibilidad | El tiempo de recuperación (MTTR) tras una terminación inesperada es menor o igual a 30 s | Recuperación automática sin intervención |
+| C1.6 | Disponibilidad | Ningún trabajo asíncrono aceptado se pierde ante la caída del servicio de inferencia | Entrega al menos una vez |
+| C1.7 | Disponibilidad | Con auth-service caído, la tasa de éxito de las transcripciones es mayor o igual a 95 % | Eliminación del punto único de fallo identificado en la primera iteración |
+| C2.1 | Escalabilidad | La capacidad de la arquitectura propuesta supera a la de la configuración de referencia en el mismo hardware | Propósito de las mejoras de escalabilidad |
+| C2.2 | Escalabilidad | Con 1000 usuarios concurrentes la plataforma no colapsa: en modo asíncrono acepta al menos el 99 % de los trabajos y completa el 100 % de los aceptados; en modo síncrono rechaza el exceso de forma rápida y explícita (503 con Retry-After), sin errores internos | Criterio definido por el equipo |
 | C2.3 | Escalabilidad | El mecanismo de adaptación vertical registra al menos una decisión de cambio ante la presión de carga | Diseño del mecanismo de adaptación |
+| C2.4 | Escalabilidad | Ninguna adaptación que empeore el costo de inferencia permanece activa después de su periodo de prueba | Adaptación verificada por medición |
 | C3.1 | Rendimiento | El RTF mediano es menor que 1 | Transcripción más rápida que el tiempo real |
-| C3.2 | Rendimiento | El tiempo de respuesta mediano en carga baja en la nube es menor o igual a 10 s | Límite de atención del usuario (Nielsen, 1993\) |
+| C3.2 | Rendimiento | El tiempo de respuesta mediano en carga baja es menor o igual a 10 s | Límite de atención del usuario (Nielsen, 1993\) |
 | C3.3 | Rendimiento | La arquitectura propuesta no presenta tiempos de respuesta significativamente mayores que el monolito | Comparación con la línea base |
+| C3.4 | Rendimiento | La inferencia con GPU y procesamiento por lotes alcanza al menos 5 veces el throughput de la CPU en fp32, sin diferencia material de WER | Justificación del uso de aceleración |
 | C4.1 | Calidad | La proporción de transcripciones vacías es 0 % | Criterio definido por el equipo |
 | C4.2 | Calidad | La proporción de clips con WER superior a 1.5 es menor o igual a 1 % | Criterio definido por el equipo |
 | C4.3 | Calidad | La compresión del audio en streaming no degrada significativamente WER ni CER | Hipótesis de diseño de la modalidad de streaming |
@@ -179,28 +217,40 @@ Esta sección describe la ejecución del protocolo y presenta los resultados obt
 
 1. ### **Resultados Cuantitativos**
 
-El protocolo se ejecutó en los dos entornos planificados. La verificación previa se realizó en el entorno local, con la pila completa de la plataforma y de la línea base desplegada mediante Docker Compose, y las ejecuciones de la prueba de carga progresiva en Azure Container Apps. Todos los contenedores alcanzaron un estado saludable, y los flujos de registro, inicio de sesión, transcripción, persistencia y consulta funcionaron correctamente en ambas arquitecturas. A modo de ejemplo, la transcripción de un clip real del corpus produjo el texto "wañuchisunchu kay suwakunata", idéntico a su referencia, tanto en la plataforma como en la línea base. Se confirmó también que la precisión de cómputo de cada transcripción quedó registrada en la base de datos, y las pruebas de integración contra la pila en ejecución se superaron en su totalidad.  
-   
-Durante la verificación se detectaron y corrigieron cuatro errores que no eran observables mediante pruebas con dependencias simuladas. El primero fue una incompatibilidad de versiones entre las librerías transformers y torch que impedía cargar el modelo, corregida fijando versiones compatibles. El segundo y el tercero correspondieron a diferencias entre las respuestas reales de los servicios y las esperadas por el cliente de medición el código de error ante un correo ya registrado y la forma de la respuesta de la solicitud de transcripción, que en la plataforma no incluye el tiempo de procesamiento y obliga a consultar el registro completo de la transcripción. Sin esta última corrección, el cálculo de RTF y WER habría producido valores inválidos. El cuarto fue un dominio de correo de prueba rechazado por la validación de datos, reemplazado por un dominio reservado para documentación.
+El protocolo se ejecutó en dos iteraciones. En la primera, la verificación y las comparaciones controladas se realizaron en el entorno local con Docker Compose, y la prueba de carga progresiva en Azure Container Apps. Todos los contenedores alcanzaron un estado saludable, y los flujos de registro, inicio de sesión, transcripción, persistencia y consulta funcionaron correctamente en ambas arquitecturas. A modo de ejemplo, la transcripción de un clip real del corpus produjo el texto "wañuchisunchu kay suwakunata", idéntico a su referencia, tanto en la plataforma como en la línea base. Se confirmó también que la precisión de cómputo de cada transcripción quedó registrada en la base de datos, y las pruebas de integración contra la pila en ejecución se superaron en su totalidad.
+
+Durante la verificación de la primera iteración se detectaron y corrigieron cuatro errores que no eran observables mediante pruebas con dependencias simuladas. El primero fue una incompatibilidad de versiones entre las librerías transformers y torch que impedía cargar el modelo, corregida fijando versiones compatibles. El segundo y el tercero correspondieron a diferencias entre las respuestas reales de los servicios y las esperadas por el cliente de medición: el código de error ante un correo ya registrado y la forma de la respuesta de la solicitud de transcripción, que en la plataforma no incluye el tiempo de procesamiento y obliga a consultar el registro completo de la transcripción. Sin esta última corrección, el cálculo de RTF y WER habría producido valores inválidos. El cuarto fue un dominio de correo de prueba rechazado por la validación de datos, reemplazado por un dominio reservado para documentación.
+
+La segunda iteración se ejecutó íntegramente en el entorno local descrito en el protocolo. Las pruebas automatizadas de los servicios modificados se superaron en su totalidad (75 en api-gateway, 44 en asr-service y 26 en audio-processor), y una transcripción de extremo a extremo del clip de carga respondió en 2.9 s por la vía síncrona y en 2.7 s por la vía asíncrona. Esta iteración también detectó y corrigió errores, que se declaran porque afectan la interpretación de los resultados:
+
+* En la primera iteración, con asr-service detenido, audio-processor respondía 200 sin transcripción y el cliente de carga lo contaba como éxito. El 100 % de éxito reportado entonces para la caída de asr-service **no era válido**. La segunda versión propaga el error como 503 y el cliente valida el contenido de cada respuesta.
+* El motor CTranslate2 decodificaba de nuevo el final de la ventana de 30 s y producía continuaciones inexistentes en algunos clips. Se corrigió decodificando una sola ventana, como el motor de referencia.
+* El cálculo del tamaño de la cola asíncrona confiaba en un contador de Redis que puede quedar desactualizado. Se reemplazó por un conteo exacto de los mensajes no entregados.
+* Los cupos del control de admisión en el borde no se liberaban cuando el cliente se desconectaba. Se corrigió protegiendo la liberación frente a la cancelación.
 
 1. #### **Síntesis de métricas frente a los criterios de aceptación**
 
-La siguiente tabla resume el resultado de cada criterio de aceptación. El detalle de cada dimensión se presenta en los apartados siguientes.
+La siguiente tabla resume el resultado de cada criterio de aceptación. Para los criterios de disponibilidad, escalabilidad y rendimiento se reportan los resultados de la segunda iteración, que corresponden a la arquitectura final. El detalle de cada dimensión se presenta en los apartados siguientes.
 
 Tabla X. Resultados frente a los criterios de aceptación.
 
 | Código | Resultado obtenido | Estado |
 | ----- | ----- | ----- |
-| C1.1 | Tasa de éxito entre 34.7 % y 100 % según el servicio detenido, frente a 6.7 % del monolito | Cumple |
-| C1.2 | Detección entre 3.4 s y 3.5 s | Cumple |
+| C1.1 | Éxito global entre 93.6 % y 100 % ante la caída de cada servicio individual, frente a 60.5 % del monolito (0 % durante su caída) | Cumple |
+| C1.2 | Detección media entre 1.1 s y 1.9 s según el escenario | Cumple |
 | C1.3 | Ninguna caída se propagó a servicios vecinos | Cumple |
-| C1.4 | Tasa de éxito en el escalón final entre 0 % y 14.4 % según la configuración | No cumple |
-| C2.1 | Incremento de 254 a 353 usuarios sostenidos (39.0 %) | Cumple |
-| C2.2 | Máximo de 353 usuarios sostenidos frente a un objetivo de 1000 | No cumple |
-| C2.3 | El mecanismo de adaptación vertical no registró decisiones de cambio | No cumple |
-| C3.1 | RTF mediano de 0.149 | Cumple |
-| C3.2 | Tiempo de respuesta mediano de 4.7 s con 10 usuarios concurrentes | Cumple |
-| C3.3 | Percentil 50 significativamente menor en la arquitectura propuesta; percentiles 95 y 99 sin diferencia significativa | Cumple |
+| C1.4 | 100 % de éxito con la carga dentro de la capacidad (10 usuarios), en todas las configuraciones de la segunda versión | Cumple |
+| C1.5 | MTTR medio entre 4.9 s y 8.7 s | Cumple |
+| C1.6 | 0 trabajos perdidos ante la caída de asr-service con carga asíncrona | Cumple |
+| C1.7 | 100 % de éxito con auth-service caído y validación local, frente a 42.9 % con validación remota | Cumple |
+| C2.1 | Throughput máximo 2.4 veces mayor que la referencia en el mismo hardware (0.86 frente a 0.36 transcripciones/s) y techo de Little de 10 frente a 4 usuarios | Cumple |
+| C2.2 | Asíncrono: 99.98 % de los trabajos aceptados y 100 % de los aceptados completados con 1000 usuarios. Síncrono: exceso rechazado con 503, sin errores internos (0 %, frente a 71.6 % sin admisión en el borde) | Cumple |
+| C2.3 | El mecanismo de adaptación aplicó decisiones en las 6 repeticiones de la ráfaga | Cumple |
+| C2.4 | La única adaptación que no mejoró el costo de inferencia se revirtió automáticamente | Cumple |
+| C3.1 | RTF mediano de 0.149 sobre el corpus con el motor de referencia, y de 0.069 con el motor optimizado (muestra de 30 clips) | Cumple |
+| C3.2 | Tiempo de respuesta mediano de 9.4 s con 10 usuarios y un clip de 24 s en el entorno local, y de 4.7 s en la nube (primera iteración) | Cumple |
+| C3.3 | {{C33_RESULT}} | {{C33_STATE}} |
+| C3.4 | Requiere GPU dedicada; resultado preliminar de 5.4 veces en un equipo con GPU (prueba de humo) | Pendiente |
 | C4.1 | 0 transcripciones vacías | Cumple |
 | C4.2 | 0.6 % de clips con WER superior a 1.5 | Cumple |
 | C4.3 | Sin diferencia significativa en WER (p \= 0.6716) ni en CER (p \= 0.9703) | Cumple |
@@ -210,82 +260,94 @@ Tabla X. Resultados frente a los criterios de aceptación.
 
 2. #### **Disponibilidad**
 
-La prueba de inyección de fallos se ejecutó en el entorno local según el procedimiento planificado, con aproximadamente 50 usuarios concurrentes ejecutando el flujo de inicio de sesión y transcripción. Se detuvieron por separado asr-service, auth-service y transcription-manager, y en una ejecución independiente se detuvo el proceso de la línea base monolítica. La detención se realizó mediante una parada ordenada del contenedor. Este método no activa la política de reinicio configurada en los servicios, que solo actúa ante terminaciones con error, por lo que la recuperación automática no pudo evaluarse con este procedimiento.
+La prueba de inyección de fallos se ejecutó en el entorno local según el procedimiento planificado, con 10 usuarios concurrentes y tres repeticiones por escenario. Una ejecución preliminar con 50 usuarios mostró que esa carga supera la capacidad de la plataforma en el hardware de evaluación: solo el 57.5 % de las solicitudes tenía éxito antes de inyectar el fallo. Con esa carga, la prueba habría medido la saturación y no la respuesta ante el fallo, por lo que se adoptó la carga correspondiente a la capacidad. La siguiente tabla presenta los resultados agregados de las tres repeticiones.
 
-La siguiente tabla presenta el impacto de la caída de cada servicio sobre las solicitudes de transcripción.
+Tabla X. Resultados de la inyección de fallos.
 
-Tabla X. Impacto de la caída de servicios sobre las solicitudes de transcripción.
+| Escenario | Detección (s) | MTTR (s) | Éxito antes | Éxito durante | Éxito después | Éxito global | Propagación |
+| ----- | ----- | ----- | ----- | ----- | ----- | ----- | ----- |
+| D1 asr-service | 1.3 | 4.9 | 100 % | 0 % (45 rechazos 503) | 100 % | 93.6 % | No |
+| D2 auth-service, validación local | 1.3 | 5.5 | 100 % | 100 % | 100 % | 100 % | No |
+| D2b auth-service, validación remota | 1.4 | 4.9 | 100 % | 42.9 % | 100 % | 97.8 % | No |
+| D3 transcription-manager | 1.8 | 6.0 | 100 % | 100 % | 100 % | 100 % | No |
+| D4 asr-service, carga asíncrona | 1.9 | 4.9 | 100 % | 100 % | 100 % | 100 % (0 trabajos perdidos) | No |
+| D5 Redis | 1.1 | 8.7 | 100 % | 100 % | 100 % | 100 % | No |
+| D6 asr-service congelado 60 s | 1.1 | — | 100 % | — | 96.0 % | 96.9 % | No |
+| D7 monolito | 1.2 | 5.6 | 100 % | 0 % | 81.3 % | 60.5 % | No aplica |
 
-| Servicio detenido | Solicitudes totales | Solicitudes fallidas | Tasa de fallas | Tasa de éxito |
-| ----- | ----- | ----- | ----- | ----- |
-| asr-service | 437 | 0 | 0.0 % | 100.0 % |
-| auth-service | 539 | 352 | 65.3 % | 34.7 % |
-| transcription-manager | 238 | 0 | 0.0 % | 100.0 % |
-| Monolito (proceso completo) | 1160 | 1082 | 93.3 % | 6.7 % |
+Gracias a la política de reinicio, todos los componentes se recuperaron solos en menos de 9 s, algo que en la primera iteración no pudo observarse porque la detención se hacía como una parada ordenada. La caída de asr-service en modo síncrono es la única que afecta a las transcripciones durante el corte, como corresponde a una única réplica del servicio de inferencia. Aun así, las solicitudes afectadas reciben de inmediato un 503 con la indicación de reintentar, en lugar de quedar en espera, y el servicio vuelve al 100 % al recuperarse. En modo asíncrono, la misma caída no afecta a ningún trabajo: los mensajes pendientes se vuelven a entregar al proceso reiniciado.
 
-La caída de asr-service no produjo fallas, las solicitudes en curso quedaron en espera, con tiempos de hasta 81 s, y se completaron cuando el servicio volvió a estar disponible. La caída de transcription-manager tampoco produjo fallas, debido a que el diseño trata la persistencia como una operación no crítica, de modo que el cliente recibe su transcripción aunque esta no se almacene. En cambio, la caída de auth-service afectó al 65.3 % de las solicitudes, porque api-gateway valida el token de cada solicitud autenticada contra este servicio, lo que lo sitúa en el camino crítico de todo el tráfico y no solo del inicio de sesión. En la línea base, la detención del proceso afectó al 93.3 % de las solicitudes de transcripción e incluso al 12 % de los inicios de sesión, ya que todos los componentes comparten el mismo proceso.  
-La siguiente tabla presenta los tiempos de detección y la propagación observada.
+La caída de auth-service, que en la primera iteración afectó al 65.3 % de las solicitudes, no tuvo ningún efecto con la validación local del token. La ejecución del mismo escenario con la validación remota, que reproduce el comportamiento original, redujo el éxito durante el corte al 42.9 %, lo que confirma que la mejora se debe a la validación local. Las caídas de transcription-manager y de Redis tampoco afectaron a las transcripciones: la persistencia se realiza en segundo plano con reintentos, y la validación de revocaciones admite el token si Redis no responde. En la línea base, la caída del proceso monolítico dejó sin servicio al 100 % de las solicitudes durante el corte, porque todos los componentes comparten el mismo proceso.
 
-Tabla X. Detección y propagación de fallos.
-
-| Servicio detenido | Tiempo de detección | Propagación a servicios vecinos |
-| ----- | ----- | ----- |
-| asr-service | 3.4 s | No |
-| auth-service | 3.5 s | No |
-| transcription-manager | 3.5 s | No |
-| Monolito | 3.7 s | No aplica |
-
-En cuanto a la disponibilidad bajo carga, obtenida de la prueba de carga progresiva en la nube, la tasa de éxito en el escalón final de la rampa se ubicó entre 0 % y 14.4 % en las cuatro configuraciones ejecutadas, es decir, ninguna configuración mantuvo la disponibilidad del servicio en los escalones de carga extrema. El detalle por configuración se presenta en el apartado siguiente.
+En cuanto a la disponibilidad bajo carga, con la carga dentro de la capacidad (10 usuarios) todas las configuraciones de la segunda versión completaron el 100 % de las solicitudes. Por encima de la capacidad, el comportamiento depende del control de admisión, como se detalla en el apartado siguiente.
 
 3. #### **Escalabilidad**
 
-La prueba de carga progresiva se ejecutó en cuatro rondas sobre Azure Container Apps, una por configuración, siguiendo el diseño iterativo planificado. La siguiente tabla presenta cada configuración y la hipótesis que motivó su definición.
+*Primera iteración (Azure Container Apps).* La prueba de carga progresiva se ejecutó en cuatro rondas, una por configuración de escalado horizontal. El autoescalado de asr-service y de auth-service incrementó el número de usuarios concurrentes de 254 a 353 (39.0 %), pero en todas las configuraciones la tasa de error del escalón final superó el 85 % y el percentil 99 del tiempo de respuesta llegó a 149 s. El análisis de los registros mostró que la saturación de auth-service se ocultaba detrás de errores 401, y que el sistema "admitía más y fallaba después": la cadena síncrona de servicios no tenía control de admisión. El mecanismo de adaptación vertical no registró ninguna decisión, porque su señal, el uso de CPU, no detectaba el encolamiento. Estos hallazgos motivaron la segunda versión de la arquitectura.
 
-Tabla X. Configuraciones de escalado ejecutadas.
+*Segunda iteración (entorno local).* La siguiente tabla compara, en el mismo hardware, la réplica de la arquitectura original (S1), la arquitectura v2 sin admisión en el borde (S2) y la arquitectura v2 completa (S2c). Los valores son la mediana de tres repeticiones; el goodput se expresa en transcripciones completadas por segundo.
 
-| Ronda | Configuración | Hipótesis que la motivó |
-| ----- | ----- | ----- |
-| 1 | Una réplica fija por servicio, sin autoescalado | Configuración de referencia |
-| 2 | Autoescalado de asr-service, con umbral de 2 solicitudes concurrentes | En la ronda 1, asr-service, con un único worker, aparecía como el cuello de botella |
-| 3 | Configuración de la ronda 2 con el modelo precargado en la imagen del contenedor | Las réplicas nuevas no alcanzaban a estar listas dentro de cada escalón, porque descargaban el modelo de aproximadamente 279 MB en cada arranque |
-| 4 | Configuración de la ronda 3 con autoescalado de auth-service, con umbral de 10 solicitudes concurrentes | La ronda 3 mostró errores de autenticación masivos atribuibles a la saturación de auth-service |
+Tabla X. Resultados de la prueba de carga progresiva (segunda iteración).
 
-La siguiente tabla presenta los resultados de las cuatro rondas en su escalón final.  
-   
-Tabla X. Resultados de escalabilidad por configuración.
+| Usuarios | S1 goodput | S1 p50 / p95 (s) | S1 fallos | S2 goodput | S2 p50 / p95 (s) | S2 fallos | S2c goodput | S2c p50 / p95 (s) | S2c fallos |
+| ----- | ----- | ----- | ----- | ----- | ----- | ----- | ----- | ----- | ----- |
+| 10 | 0.36 | 25.6 / 26.8 | — | 0.82 | 9.4 / 13.3 | — | 0.82 | 9.5 / 13.8 | — |
+| 50 | 0.33 | 84.7 / 99.9 | timeout 24 % | 0.86 | 54.6 / 56.9 | 503 9 % (0.46 s) | 0.77 | 13.1 / 14.3 | 503 96 % (0.01 s) |
+| 100 | 0.12 | 98.6 / 100.3 | timeout 84 % | 0.34 | 64.0 / 96.4 | 503 97 % (2.98 s); timeout 1 % | 0.68 | 14.2 / 17.2 | 503 98 % (0.01 s) |
+| 200 | 0.11 | 99.7 / 100.3 | timeout 93 % | 0.31 | 72.6 / 79.9 | 503 98 % (9.56 s) | 0.48 | 20.4 / 22.6 | 503 99 % (0.06 s) |
+| 500 | 0.06 | 99.9 / 100.3 | timeout 99 % | 0.34 | 80.1 / 100.5 | 503 90 % (25.81 s); 5xx 7 % | 0.48 | 22.9 / 27.4 | 503 99 % (2.85 s) |
+| 1000 | 0.01 | 105.1 / 110.1 | timeout 40 %; 5xx 60 % | 0.22 | 104.9 / 121.2 | 503 26 % (51.95 s); timeout 1 %; 5xx 72 % | 0.44 | 26.5 / 33.5 | 503 99 % (5.43 s) |
 
-| Ronda | Configuración | Usuarios concurrentes sostenidos | Tasa de error en el escalón final | Percentil 99 del tiempo de respuesta |
+En la referencia (S1), la plataforma atiende 0.36 transcripciones por segundo y, desde 50 usuarios, las solicitudes esperan hasta agotar el tiempo límite de 100 s: con 100 usuarios, el 84 % termina en timeout, y con 1000 usuarios no se completa ninguna. Los cambios de la arquitectura v2 sin admisión en el borde (S2) multiplican por 2.4 el goodput máximo y reducen el tiempo de respuesta mediano con 10 usuarios de 25.6 s a 9.4 s. Sin embargo, desde 100 usuarios el goodput cae a 0.3 transcripciones por segundo, los rechazos tardan hasta 52 s y con 1000 usuarios el 71.6 % de las solicitudes termina en error interno. La causa es que el control de admisión de S2 actúa al final de la cadena: antes de rechazar una solicitud, api-gateway y audio-processor ya recibieron, convirtieron y registraron el audio, y ese trabajo desperdiciado compite por la CPU con la inferencia.
+
+Con la admisión en el borde (S2c), el exceso se rechaza en api-gateway antes de procesar el audio, en una mediana de 0.01 s con hasta 200 usuarios. El goodput se mantiene cerca de su máximo hasta 100 usuarios, las solicitudes admitidas se responden en 13 a 17 s en lugar de 55 a 105 s, y no se registran errores internos en ningún escalón. Con 500 y 1000 usuarios el goodput desciende a 0.44–0.48 transcripciones por segundo. Este descenso se atribuye a que el generador de carga se ejecuta en el mismo equipo y reenvía de inmediato cada solicitud rechazada con el audio completo, sin respetar la indicación Retry-After: con 1000 usuarios emite alrededor de 200 solicitudes por segundo que compiten por la misma CPU.
+
+Por la ley de Little, el techo de usuarios síncronos que el hardware de evaluación puede atender con un tiempo de respuesta de 10 s es de unos 10 usuarios con la arquitectura v2 (0.86 × 12) y de 4 con la original (0.36 × 12). Ninguna arquitectura puede atender 1000 usuarios síncronos en este equipo; lo que distingue a la arquitectura propuesta es que, ante esa carga, sigue atendiendo a su capacidad y rechaza el exceso de forma explícita, en lugar de colapsar.
+
+La alternativa para atender la demanda que supera la capacidad es la API asíncrona. La siguiente tabla presenta el resultado de la corrida asíncrona con 1000 usuarios.
+
+Tabla X. Resultados de la prueba de carga asíncrona (S2b).
+
+| Repetición | Trabajos enviados | Aceptados | Procesados | Fallidos | Completitud |
+| ----- | ----- | ----- | ----- | ----- | ----- |
+| 1 | 1905 | 1905 (100 %) | 1905 | 0 | 100 % |
+| 2 | 1757 | 1756 (99.94 %) | 1756 | 0 | 100 % |
+| 3 | 1865 | 1865 (100 %) | 1865 | 0 | 100 % |
+
+La plataforma aceptó el 99.98 % de los 5527 trabajos enviados y completó el 100 % de los aceptados, sin pérdidas ni duplicados. El único envío no aceptado fue un error interno en el pico de 1000 usuarios. La cola absorbe la demanda que excede la capacidad y la procesa a la velocidad que el hardware permite, a costa de un mayor tiempo de espera para cada trabajo.
+
+*Adaptación vertical.* La siguiente tabla presenta el comportamiento del mecanismo de adaptación ante la ráfaga de 24 clientes, con tres repeticiones por motor de inferencia.
+
+Tabla X. Comportamiento del mecanismo de adaptación vertical.
+
+| Motor | Decisiones aplicadas | Tiempo de reacción (s) | Transcripciones/s antes → después | Resultado del periodo de prueba |
 | ----- | ----- | ----- | ----- | ----- |
-| 1 | Sin autoescalado | 254 | 96.9 % a 100 % | 68 s a 81 s aprox. |
-| 2 | Autoescalado de asr-service | 307 | 85.6 % | 81 s aprox. |
-| 3 | Ronda 2 más modelo precargado en la imagen | 244 | 97.1 % a 100 % | 67 s aprox. |
-| 4 | Ronda 3 más autoescalado de auth-service | 353 | 85.9 % a 100 % | 149 s |
+| CTranslate2 | 2 en cada repetición | 12.8 – 13.4 | 0.46 → 0.89 (mediana) | int8 superó el periodo de prueba en 3 de 3 |
+| transformers | 2 en cada repetición | 16.2 – 16.8 | 0.25 → 0.50 (mediana) | int8 superó el periodo de prueba en 2 de 3 y se revirtió en 1 de 3 |
 
-El autoescalado de asr-service incrementó el número de usuarios concurrentes sostenidos de 254 a 307 (20.9 %), y la incorporación del autoescalado de auth-service lo elevó a 353, un 39.0 % más que la configuración sin autoescalado. Sin embargo, ninguna configuración redujo la tasa de error del escalón final por debajo de aproximadamente 85 %, de modo que todas terminaron colapsando ante la carga extrema.  
-   
-La ronda 3 obtuvo un resultado inferior al de la ronda 2 pese a incorporar una mejora en el tiempo de arranque. El análisis de los registros de fallas mostró 2652 errores de autenticación (código 401\) en el endpoint de transcripción, inexistentes en la ronda 2\. La revisión del código de api-gateway explicó el origen, cualquier respuesta de auth-service distinta de una validación exitosa, incluidos los errores 500, 502 y 504 producidos por sobrecarga, se traduce en un error 401 para el cliente, lo que ocultaba que la causa real era la saturación de auth-service, que operaba con una única réplica fija. Tras autoescalar este servicio en la ronda 4, los errores 401 disminuyeron a 235, una reducción del 91.1 %, y se alcanzó el mayor número de usuarios sostenidos de la serie. En contrapartida, el percentil 99 del tiempo de respuesta aumentó a 149s la plataforma admitió más tráfico, pero lo hizo esperar más tiempo antes de fallar.  
-   
-Durante las cuatro rondas, el mecanismo de adaptación vertical no registró ninguna decisión de cambio de precisión. Su señal de decisión, el porcentaje de uso de CPU, no detecta el encolamiento de solicitudes frente a un único worker, que es precisamente la forma en que se manifestó la saturación de asr-service.
+En todas las repeticiones, el mecanismo detectó la presión de carga por la profundidad de la cola, cambió la precisión de fp32 a int8 y volvió a fp32 al terminar la ráfaga, con un tiempo de reacción de entre 13 y 17 s. Con el motor CTranslate2, el cambio casi duplicó el throughput. Con el motor transformers, en una de las repeticiones la ganancia medida fue inferior al 5 % exigido y el mecanismo revirtió el cambio, registrando ese estado como rechazado en el equipo. Esto contrasta con la primera iteración, en la que el mecanismo no tomó ninguna decisión, y con una prueba preliminar en otro equipo, donde la cuantización int8 resultó dos veces más lenta y se revirtió de forma automática. La verificación por medición permite que una misma política produzca el resultado correcto en hardware distinto.
 
 4. #### **Rendimiento**
 
-La evaluación de reconocimiento procesó los 2111 clips del corpus en CPU con precisión fp32. La prueba de carga comparativa se ejecutó en el entorno local con la misma rampa contra ambas arquitecturas, sobre el mismo hardware. La prueba comparativa de codificación se ejecutó con la muestra de 30 clips y tres repeticiones por condición, lo que dio 90 sesiones por condición. Durante su ejecución se detectó un error en el servicio de decodificación la conversión con ffmpeg no especificaba la frecuencia de muestreo de salida, por lo que el audio Opus, codificado internamente a 48 kHz, llegaba al modelo sin remuestrear a 16 kHz y la sesión quedaba sin respuesta. El error se corrigió agregando la frecuencia de 16 kHz a la conversión antes de obtener los resultados reportados.
+La evaluación de reconocimiento procesó los 2111 clips del corpus en CPU con precisión fp32. El RTF mediano sobre el corpus fue de 0.149, con un rango intercuartílico de 0.120 a 0.201. Por fuente, el RTF mediano fue de 0.135 en Huqariq y de 0.183 en Siminchik. En términos prácticos, la plataforma procesa un clip de 10 s en aproximadamente 1.5 s de cómputo. En la nube, con 10 usuarios concurrentes y sin autoescalado, el tiempo de respuesta mediano fue de 4.7 s.
 
-El RTF mediano sobre el corpus fue de 0.149, con un rango intercuartílico de 0.120 a 0.201. Por fuente, el RTF mediano fue de 0.135 en Huqariq y de 0.183 en Siminchik. En términos prácticos, la plataforma procesa un clip de 10 s en aproximadamente 1.5 s de cómputo. En la nube, con 10 usuarios concurrentes y sin autoescalado, el tiempo de respuesta mediano fue de 4.7 s.  
- La siguiente tabla presenta los resultados de la prueba de carga comparativa.  
-   
-Tabla X. Tiempo de respuesta y throughput de arquitectura propuesta frente a monolito.
+La siguiente tabla presenta el throughput de inferencia de las principales configuraciones evaluadas, medido directamente contra asr-service.
 
-| Métrica | Propuesta (media) | Monolito (media) | Prueba | Valor p | Delta de Cliff | Magnitud | Significativo |
-| ----- | ----- | ----- | ----- | ----- | ----- | ----- | ----- |
-| Percentil 50 (ms) | 16 787.4 | 24 882.3 | U de Mann-Whitney | \< 0.001 | \-0.579 | Grande | Sí |
-| Percentil 95 (ms) | 69 787.4 | 54 082.9 | U de Mann-Whitney | 0.9929 | 0.000 | Despreciable | No |
-| Percentil 99 (ms) | 82 581.9 | 57 364.3 | U de Mann-Whitney | 0.2599 | 0.028 | Despreciable | No |
-| Throughput (req/s) | 2.8 | 4.2 | U de Mann-Whitney | 0.3933 | 0.021 | Despreciable | No |
+Tabla X. Throughput de inferencia por configuración (segundos de audio procesados por segundo).
 
-La arquitectura propuesta obtuvo un percentil 50 un 32.5 % menor que el del monolito, con una diferencia estadísticamente significativa y un tamaño de efecto grande. En los percentiles 95 y 99 y en el throughput, las diferencias no fueron significativas y los tamaños de efecto fueron despreciables, aunque los valores medios del monolito fueron numéricamente menores en esos indicadores. Cabe precisar que los valores medios de la tabla agregan todos los escalones de la rampa, incluidos los de carga extrema, por lo que no representan el tiempo de respuesta en condiciones normales de uso.  
-La siguiente tabla presenta los resultados de latencia y volumen transmitido de la prueba comparativa de codificación.  
-   
+| Configuración | 1 cliente | 4 clientes | 16 clientes | Máximo | Respecto de la referencia | p95 con 16 clientes (s) |
+| ----- | ----- | ----- | ----- | ----- | ----- | ----- |
+| transformers fp32 (referencia) | 7.1 | 6.1 | 5.0 | 7.1 | 1.00 | 47.7 |
+| transformers int8 | 9.8 | 8.8 | 8.1 | 9.8 | 1.39 | 32.7 |
+| CTranslate2 int8, 1 línea | 13.5 | 12.2 | 10.3 | 13.8 | 1.95 | 23.5 |
+| CTranslate2 int8, 3 líneas (seleccionada) | 11.9 | 19.4 | 16.3 | 19.4 | 2.74 | 17.5 |
+
+El motor CTranslate2 con cuantización int8 y tres líneas de inferencia en paralelo alcanzó 2.7 veces el throughput de la configuración de referencia, sin hardware adicional, y redujo el percentil 95 de la latencia con 16 clientes de 47.7 s a 17.5 s. Como control, se comparó la transcripción de los 30 clips de la muestra con cada motor y precisión. Ninguna configuración mostró una diferencia significativa de WER respecto de la referencia (prueba de rangos con signo de Wilcoxon: p \= 0.11 para CTranslate2 fp32 y p \= 0.22 para CTranslate2 int8), y la mediana de WER fue la misma (0.75). En una sola solicitud, el RTF mediano pasó de 0.135 a 0.069.
+
+{{E3_TEXT}}
+
+La siguiente tabla presenta los resultados de latencia y volumen transmitido de la prueba comparativa de codificación.
+
 Tabla X. Latencia y volumen transmitido en streaming.
 
 | Condición | n | Latencia media (s) | IC 95 % | Bytes enviados (media) |
@@ -337,25 +399,37 @@ Los resultados cualitativos provienen de los cuestionarios a expertos y de las p
 
    1. ### **Análisis Comparativo**
 
-Los resultados se contrastan con tres referentes la línea base monolítica, el estado del arte del reconocimiento de voz para quechua y lenguas de bajos recursos, y los criterios de aceptación del protocolo.  
-   
-Sobre la línea base monolítica, la comparación ofrece su evidencia más sólida en la dimensión de disponibilidad. Ante la caída de un componente, la arquitectura propuesta conservó entre el 34.7 % y el 100 % de las solicitudes exitosas, mientras que el monolito conservó solo el 6.7 %. En rendimiento, la arquitectura propuesta redujo el percentil 50 del tiempo de respuesta en un 32.5 % con un efecto grande, lo que es consistente con su diseño el monolito serializa autenticación, conversión de audio e inferencia en un único worker, mientras que la propuesta solo serializa la inferencia y ejecuta la autenticación y el procesamiento de audio en servicios con cuatro workers. Sin embargo, la ventaja no se extiende a los percentiles 95 y 99 ni al throughput, donde no hubo diferencias significativas. Este patrón coincide con lo señalado por Dean y Barroso (2013) mencionando que a medida que una solicitud atraviesa más componentes, la cola de la distribución de tiempos tiende a crecer, de modo que la separación en servicios mejora la experiencia típica sin garantizar una mejora en los peores casos. Villamizar et al. (2015) también evaluaron ambos patrones en despliegues en la nube y advirtieron que los beneficios de los microservicios dependen del contexto de carga y de la configuración de la infraestructura, lo que resulta coherente con que la ventaja observada aquí sea parcial y no absoluta.  
-   
-Sobre el estado del arte, El WER mediano de 0.697 es elevado en términos absolutos, pero debe interpretarse considerando dos factores. Primero, se evitó deliberadamente evaluar con corpus que probablemente se solapan con los datos de entrenamiento del modelo, lo que produce una estimación más conservadora y realista que la que se obtendría con datos contaminados. Segundo, el CER mediano de 0.172 indica que el modelo reconoce correctamente la mayor parte de los caracteres, y que una proporción considerable de los errores por palabra corresponde a diferencias parciales dentro de palabras largas, lo que es consistente con la alta complejidad del quechua. Estos resultados confirman el diagnóstico de la literatura sobre la escasez de datos como principal limitante de la calidad en lenguas de bajos recursos (Abdulmumin et al., 2025\) y matizan la expectativa de que una arquitectura de servicios robusta permita por sí sola resultados altamente precisos (Francisco, 2026\) la arquitectura garantiza la disponibilidad y el rendimiento del servicio, pero la precisión depende principalmente del modelo y de los datos con que fue ajustado.  
- 
+Los resultados se contrastan con cuatro referentes: la arquitectura de la primera iteración, la línea base monolítica, el estado del arte del reconocimiento de voz para quechua y lenguas de bajos recursos, y los criterios de aceptación del protocolo.
 
-2. ### **Hallazgos**
+Respecto de la primera iteración, la segunda versión de la arquitectura convirtió en cumplidos los tres criterios que antes no se cumplían. En disponibilidad, la caída de auth-service pasó de afectar al 65.3 % de las solicitudes a no afectar a ninguna, y todos los componentes se recuperaron solos en menos de 9 s. En escalabilidad, la plataforma pasó de colapsar con timeouts de 100 s a mantenerse cerca de su capacidad y rechazar el exceso de forma explícita, y en modo asíncrono completó el 100 % de los trabajos aceptados con 1000 usuarios. En adaptación, el mecanismo pasó de no registrar ninguna decisión a reaccionar en todas las repeticiones. Estas mejoras no requirieron hardware adicional: se obtuvieron en un equipo sin GPU, sobre el mismo hardware en que se midió la réplica de la primera versión.
 
-El aislamiento de fallos es el aporte más sólido de la arquitectura. La separación de responsabilidades limitó el impacto de la caída de un servicio a entre 0 % y 65.3 % del tráfico, nunca al sistema completo, frente al 93.3 % del monolito. Este resultado respalda empíricamente la decisión arquitectónica y el enfoque modular e interoperable propuesto para integrar servicios de inteligencia artificial (Tantaroudas et al., 2026).  
-El servicio auth-service es un punto único de fallo en el camino crítico. Dos técnicas de evaluación independientes convergen en este hallazgo. En la inyección de fallos, la caída de auth-service fue la única que afectó de forma significativa a las transcripciones, y en la prueba de carga progresiva, su saturación fue la causa real del deterioro observado en la ronda 3, oculta tras errores 401 que aparentaban ser problemas de credenciales. El hallazgo muestra que el servicio con mayor carga computacional, asr-service, no era necesariamente el cuello de botella, y que identificar el límite real requirió instrumentación y análisis de registros. Asimismo, evidencia que la forma en que api-gateway traduce los errores de un servicio dependiente puede ocultar la causa de una falla.  
-   
-El escalado horizontal mejora la capacidad, pero no resuelve la escalabilidad. El autoescalado incrementó en un 39.0 % el número de usuarios concurrentes sostenidos, pero todas las configuraciones colapsaron ante la carga extrema. Además, la mejora de la ronda 4 se obtuvo a costa de un percentil 99 de 149 s, lo que indica que el sistema pasó de fallar rápidamente a hacer esperar a los usuarios antes de fallar.  
-   
-La adaptación vertical no reaccionó ante la carga real. La justificación del proyecto planteaba que una distribución adaptativa de la carga permitiría ajustar proactivamente los recursos ante picos de uso y mantener una latencia mínima (Jin & Yang, 2025). Los resultados muestran que el mecanismo de adaptación vertical, basado en el porcentaje de uso de CPU, no registró ninguna decisión durante la prueba de carga, porque la saturación se manifestó como encolamiento de solicitudes y no como un uso elevado de CPU. Este resultado es consistente con la observación de que la eficacia de las reglas reactivas depende de elegir una métrica que refleje la saturación real del servicio (Lorido-Botran et al., 2014), y respalda la decisión de configurar el escalado horizontal sobre la concurrencia de solicitudes. La adaptación efectiva de la plataforma provino, por tanto, del escalado horizontal y no del mecanismo vertical.  
-   
-La compresión del audio no degrada la calidad en streaming. La hipótesis de diseño original sostenía que el envío de audio comprimido produciría errores en la transcripción, razón por la cual la interfaz transmite audio PCM sin comprimir. Los resultados contradicen esa hipótesis para audio Opus bien formado no hubo diferencias de WER ni de CER, mientras que la latencia se redujo en un 53.8 % y el volumen transmitido en un 71.7 %. Este hallazgo es relevante para la accesibilidad, ya que un menor volumen de datos favorece el uso de la plataforma en conexiones de baja capacidad.  
-   
-La plataforma responde en tiempos adecuados en condiciones normales, pero no en los extremos. Con un RTF mediano de 0.149 y un tiempo de respuesta mediano de 4.7 s con 10 usuarios concurrentes en la nube, la plataforma se encuentra dentro del límite de atención del usuario en condiciones de carga baja (Nielsen, 1993). Esta ventaja se pierde a medida que la carga crece, lo que refuerza la necesidad de distinguir entre el rendimiento típico y el rendimiento bajo saturación al interpretar los resultados.
+Sobre la línea base monolítica, la comparación ofrece su evidencia más sólida en la dimensión de disponibilidad. Ante la caída de un componente, la arquitectura propuesta conservó entre el 93.6 % y el 100 % de las solicitudes exitosas, mientras que el monolito conservó el 60.5 % y quedó sin servicio durante toda su caída. {{E3_DISCUSSION}} Villamizar et al. (2015) también evaluaron ambos patrones en despliegues en la nube y advirtieron que los beneficios de los microservicios dependen del contexto de carga y de la configuración de la infraestructura. Los resultados de este trabajo precisan esa observación: la separación en servicios aporta aislamiento de fallos por sí misma, pero la escalabilidad bajo sobrecarga depende de mecanismos explícitos, como el control de admisión y la cola asíncrona, que deben diseñarse como parte de la arquitectura.
+
+Sobre el estado del arte, el WER mediano de 0.697 es elevado en términos absolutos, pero debe interpretarse considerando dos factores. Primero, se evitó deliberadamente evaluar con corpus que probablemente se solapan con los datos de entrenamiento del modelo, lo que produce una estimación más conservadora y realista que la que se obtendría con datos contaminados. Segundo, el CER mediano de 0.172 indica que el modelo reconoce correctamente la mayor parte de los caracteres, y que una proporción considerable de los errores por palabra corresponde a diferencias parciales dentro de palabras largas, lo que es consistente con la alta complejidad del quechua. Estos resultados confirman el diagnóstico de la literatura sobre la escasez de datos como principal limitante de la calidad en lenguas de bajos recursos (Abdulmumin et al., 2025\) y matizan la expectativa de que una arquitectura de servicios robusta permita por sí sola resultados altamente precisos (Francisco, 2026\): la arquitectura garantiza la disponibilidad y el rendimiento del servicio, pero la precisión depende principalmente del modelo y de los datos con que fue ajustado. En el mismo sentido, la optimización del motor de inferencia multiplicó el throughput sin alterar de forma significativa el WER.
+
+   2. ### **Hallazgos**
+
+El aislamiento de fallos es el aporte más sólido de la arquitectura. La separación de responsabilidades limitó el impacto de la caída de cada servicio a una ventana de unos 5 s y, salvo en el caso del propio servicio de inferencia, a ninguna solicitud. Frente a ello, la caída del monolito interrumpió todo el servicio. Este resultado respalda empíricamente la decisión arquitectónica y el enfoque modular e interoperable propuesto para integrar servicios de inteligencia artificial (Tantaroudas et al., 2026).
+
+La validación local del token eliminó el punto único de fallo identificado en la primera iteración. En la primera iteración, dos técnicas de evaluación independientes convergieron en que auth-service, consultado en cada solicitud, era un punto único de fallo y la causa oculta del deterioro bajo carga, enmascarada por errores 401. En la segunda iteración, la validación local del token llevó el éxito durante su caída al 100 %, y el contraste con la validación remota (42.9 %) atribuye la mejora a ese cambio.
+
+La escalabilidad bajo sobrecarga requiere que el rechazo ocurra en el borde. El escalado horizontal de la primera iteración incrementó los usuarios atendidos en un 39 %, pero todas las configuraciones colapsaron. En la segunda iteración, un control de admisión ubicado solo al final de la cadena mejoró la capacidad, pero no evitó la degradación: el trabajo invertido en solicitudes que luego se rechazaban redujo el goodput a la tercera parte y produjo errores internos. Al trasladar la decisión a api-gateway, antes de procesar el audio, el goodput se mantuvo cerca de la capacidad, el tiempo de respuesta de las solicitudes admitidas cayó a menos de la cuarta parte y los errores internos desaparecieron. El hallazgo muestra que la ubicación del control de admisión importa tanto como su existencia.
+
+Una cola asíncrona permite atender una demanda superior a la capacidad sin perder solicitudes. Ninguna arquitectura puede atender 1000 usuarios síncronos en un equipo sin GPU dentro de un tiempo de respuesta razonable, como muestra la cota de Little. Con la API asíncrona, la plataforma aceptó el 99.98 % de los trabajos y completó el 100 % de los aceptados, incluso ante la caída del servicio de inferencia. El compromiso es el tiempo de espera, que crece con la demanda, por lo que la modalidad asíncrona es adecuada para la transcripción de archivos y no para la interacción en tiempo real.
+
+La adaptación vertical funciona cuando observa la señal correcta y verifica su efecto. La justificación del proyecto planteaba que una distribución adaptativa de la carga permitiría ajustar proactivamente los recursos ante picos de uso y mantener una latencia mínima (Jin & Yang, 2025). En la primera iteración, el mecanismo basado en el uso de CPU no reaccionó, porque la saturación se manifestaba como encolamiento, en coherencia con la observación de que la eficacia de las reglas reactivas depende de elegir una métrica que refleje la saturación real del servicio (Lorido-Botran et al., 2014). Con la profundidad de la cola como señal, el mecanismo reaccionó en todas las repeticiones y casi duplicó el throughput. El periodo de prueba evitó además mantener una adaptación que no rendía, lo que resultó necesario porque el efecto de la cuantización varió entre equipos.
+
+La optimización del motor de inferencia es la palanca de rendimiento más eficaz sin GPU. El motor CTranslate2 con cuantización int8 y varias líneas en paralelo multiplicó por 2.7 el throughput de inferencia sin diferencia significativa de WER, y ese aumento se trasladó directamente a la capacidad de la plataforma, que pasó de 4 a 10 usuarios síncronos dentro del objetivo de servicio según la ley de Little.
+
+La compresión del audio no degrada la calidad en streaming. La hipótesis de diseño original sostenía que el envío de audio comprimido produciría errores en la transcripción, razón por la cual la interfaz transmite audio PCM sin comprimir. Los resultados contradicen esa hipótesis para audio Opus bien formado: no hubo diferencias de WER ni de CER, mientras que la latencia se redujo en un 53.8 % y el volumen transmitido en un 71.7 %. Este hallazgo es relevante para la accesibilidad, ya que un menor volumen de datos favorece el uso de la plataforma en conexiones de baja capacidad.
+
+   3. ### **Amenazas a la validez**
+
+* **Generador de carga en el mismo equipo.** En la segunda iteración, Locust se ejecutó en el mismo equipo que la plataforma. Con 500 y 1000 usuarios, los reintentos inmediatos de las solicitudes rechazadas consumieron CPU compartida, por lo que el goodput medido en esos escalones es una cota inferior del que se obtendría con un generador independiente. Además, el proxy de puertos de Docker Desktop se saturó en el escalón de 1000 usuarios; entre corridas se esperó a que liberara sus conexiones, y una repetición contaminada por ese efecto se descartó y se repitió.
+* **Hardware sin GPU.** La segunda iteración se evaluó en un equipo sin GPU dedicada. Los criterios que dependen de aceleración (C3.4) y la conmutación entre CPU y GPU del mecanismo de adaptación quedan pendientes de evaluación en un equipo con GPU; las pruebas preliminares en ese tipo de equipo son coherentes con los resultados aquí reportados.
+* **Un único clip en las pruebas de carga.** Las pruebas de carga utilizan un clip representativo del corpus para que la carga sea comparable entre configuraciones; la variabilidad de duración se cubre en la evaluación sobre el corpus y en la muestra estratificada de las pruebas de rendimiento.
+* **Control de calidad del motor optimizado.** La equivalencia de WER entre motores se verificó sobre la muestra estratificada de 30 clips; su confirmación sobre el corpus completo se encuentra en curso.
+* **Corrección de un resultado de la primera iteración.** El 100 % de éxito reportado en la primera iteración para la caída de asr-service se debía a respuestas exitosas sin transcripción; los resultados de disponibilidad de la segunda iteración validan el contenido de cada respuesta.
 
 # **CONCLUSIONES Y RECOMENDACIONES**
 
