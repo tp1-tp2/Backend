@@ -28,8 +28,8 @@ from Locust's CSV. This orchestrator:
 
 Usage (from experiments/e6_fault_injection/):
     python run_scenario.py --scenario asr-kill --container backend-asr-service-1 \\
-        --mode kill --target-health http://localhost:8004/health \\
-        --neighbor-health http://localhost:8000/health http://localhost:8001/health \\
+        --mode kill --target-health http://127.0.0.1:8004/health \\
+        --neighbor-health http://127.0.0.1:8000/health http://127.0.0.1:8001/health \\
         --users-csv ../e4_load_test/users_local_proposed.csv --sample-audio clip.wav \\
         --load-mode sync --users 50 --duration-s 240 --fault-at 60 --outage-s 60
 
@@ -134,7 +134,7 @@ def main() -> None:
     ap.add_argument("--mode", choices=["crash", "stop", "kill", "pause"], default="crash")
     ap.add_argument("--target-health", required=True)
     ap.add_argument("--neighbor-health", nargs="*", default=[])
-    ap.add_argument("--host", default="http://localhost:8000")
+    ap.add_argument("--host", default="http://127.0.0.1:8000")
     ap.add_argument("--users-csv", required=True)
     ap.add_argument("--sample-audio", required=True)
     ap.add_argument("--load-mode", choices=["sync", "async"], default="sync")

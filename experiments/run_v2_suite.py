@@ -34,7 +34,7 @@ ROOT = HERE.parent
 RESULTS = HERE / "results"
 PY = sys.executable
 # Host URL of the api-gateway (GATEWAY_PORT in docker-compose.yml; 8000 by default)
-GW = os.environ.get("GATEWAY_URL", "http://localhost:8000")
+GW = os.environ.get("GATEWAY_URL", "http://127.0.0.1:8000")
 
 BASE_FILES = ["-f", str(ROOT / "docker-compose.yml")]
 GPU_FILES = BASE_FILES + ["-f", str(ROOT / "docker-compose.gpu.yml")]
@@ -86,18 +86,18 @@ E9_SCENARIOS = [
 
 # (scenario, container, mode, target health, load mode, extra env)
 E6_SCENARIOS = [
-    ("D1-asr-crash", "backend-asr-service-1", "crash", "http://localhost:8004/health", "sync", {}),
-    ("D2-auth-crash-local", "backend-auth-service-1", "crash", "http://localhost:8001/health", "sync", {}),
-    ("D2b-auth-crash-remote", "backend-auth-service-1", "crash", "http://localhost:8001/health", "sync",
+    ("D1-asr-crash", "backend-asr-service-1", "crash", "http://127.0.0.1:8004/health", "sync", {}),
+    ("D2-auth-crash-local", "backend-auth-service-1", "crash", "http://127.0.0.1:8001/health", "sync", {}),
+    ("D2b-auth-crash-remote", "backend-auth-service-1", "crash", "http://127.0.0.1:8001/health", "sync",
      {"AUTH_MODE": "remote"}),
-    ("D3-trans-crash", "backend-transcription-manager-1", "crash", "http://localhost:8005/health", "sync", {}),
-    ("D4-asr-crash-async", "backend-asr-service-1", "crash", "http://localhost:8004/health", "async", {}),
+    ("D3-trans-crash", "backend-transcription-manager-1", "crash", "http://127.0.0.1:8005/health", "sync", {}),
+    ("D4-asr-crash-async", "backend-asr-service-1", "crash", "http://127.0.0.1:8004/health", "async", {}),
     ("D5-redis-crash", "backend-redis-1", "crash", "docker:backend-redis-1", "sync", {}),
-    ("D6-asr-pause", "backend-asr-service-1", "pause", "http://localhost:8004/health", "sync", {}),
+    ("D6-asr-pause", "backend-asr-service-1", "pause", "http://127.0.0.1:8004/health", "sync", {}),
 ]
-MONOLITH_HEALTH = "http://localhost:8006/health"
-NEIGHBOURS = [f"{GW}/health", "http://localhost:8001/health",
-              "http://localhost:8003/health", "http://localhost:8005/health"]
+MONOLITH_HEALTH = "http://127.0.0.1:8006/health"
+NEIGHBOURS = [f"{GW}/health", "http://127.0.0.1:8001/health",
+              "http://127.0.0.1:8003/health", "http://127.0.0.1:8005/health"]
 
 
 def log(msg: str) -> None:
@@ -136,14 +136,29 @@ def _ok(url: str) -> bool:
 
 def apply_config(env: dict, gpu: bool, services: list[str] | None = None) -> None:
     files = GPU_FILES if (gpu and not CPU_ONLY) else BASE_FILES
-    # Fresh-deployment hygiene: Redis persists (AOF) across recreates, so drop
-    # edge-admission slots left by requests the previous run's load generator
-    # abandoned when it stopped.
+    compose(files, env, "up", "-d", "--force-recreate", "--no-build", *(services or []))
+    wait_ready(["http://127.0.0.1:8004/ready"] if services == ["asr-service"]
+               else [f"{GW}/health", "http://127.0.0.1:8004/ready"])
+
+
+def quiesce(ports=(8080, 8006), timeout_s: float = 300.0) -> None:
+    """Testbed hygiene between load runs (E4 v2 finding): after a 1000-user
+    step, Docker Desktop's Windows port proxy keeps queued client connections
+    and delivers them to the NEXT run's freshly started containers. Wait until
+    no connections to the published ports remain, then drop edge-admission
+    slots held by abandoned requests (Redis persists across recreates)."""
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True).stdout
+        busy = [ln for ln in out.splitlines()
+                if "ESTABLISHED" in ln and any(f":{p} " in ln for p in ports)]
+        if not busy:
+            break
+        time.sleep(5)
+    time.sleep(15)  # let in-flight server-side work from abandoned requests finish
     subprocess.run(["docker", "exec", "backend-redis-1", "redis-cli", "DEL", "gw:sync_transcribe_inflight"],
                    capture_output=True)
-    compose(files, env, "up", "-d", "--force-recreate", "--no-build", *(services or []))
-    wait_ready(["http://localhost:8004/ready"] if services == ["asr-service"]
-               else [f"{GW}/health", "http://localhost:8004/ready"])
+    print(f"quiesced in {time.time() - t0:.0f}s", flush=True)
 
 
 def run(cmd: list[str], cwd: Path, extra_env: dict | None = None) -> None:
@@ -240,6 +255,7 @@ def phase_e4(a) -> None:
             users = ensure_users(GW, RESULTS / "users_v2_proposed.csv", 30)
             raw = RESULTS / f"{tag}_raw.csv"
             raw.unlink(missing_ok=True)
+            quiesce()
             # async: let users finish polling jobs already accepted when the ramp ends
             stop = ["--stop-timeout", "1800"] if mode == "async" else []
             run([PY, "-m", "locust", "-f", "locustfile.py", "--host", GW,
@@ -290,7 +306,7 @@ def job_completion(raw: Path, out: Path, timeout_s: float = 1800.0) -> None:
 
     def _worker() -> dict:
         try:
-            return httpx.get("http://localhost:8004/status/scheduler", timeout=10).json().get("job_worker", {})
+            return httpx.get("http://127.0.0.1:8004/status/scheduler", timeout=10).json().get("job_worker", {})
         except Exception:
             return {}
 
@@ -319,7 +335,7 @@ def job_completion(raw: Path, out: Path, timeout_s: float = 1800.0) -> None:
 
 
 def phase_e3(a) -> None:
-    for label, host in (("proposed", GW), ("monolith", "http://localhost:8006")):
+    for label, host in (("proposed", GW), ("monolith", "http://127.0.0.1:8006")):
         for rep in range(1, a.repeats + 1):
             tag = f"e3v2_{label}_r{rep}"
             log(f"E3 {tag}")
@@ -328,6 +344,7 @@ def phase_e3(a) -> None:
             users = ensure_users(host, RESULTS / f"users_v2_{label}.csv", 30)
             raw = RESULTS / f"{tag}_raw.csv"
             raw.unlink(missing_ok=True)
+            quiesce()
             run([PY, "-m", "locust", "-f", "locustfile.py", "--host", host, "--headless",
                  "--only-summary", "--csv", str(RESULTS / tag)], HERE / "e4_load_test",
                 {"E4_USERS_CSV": str(users), "E4_SAMPLE_AUDIO": a.audio, "E4_MODE": "sync",
@@ -360,10 +377,10 @@ def phase_e6(a) -> None:
         log(f"E6 {tag}")
         apply_config(e3_env(a), gpu=True)
         wait_ready([MONOLITH_HEALTH])  # the monolith starts slower than the gateway
-        users = ensure_users("http://localhost:8006", RESULTS / "users_v2_monolith.csv", 30)
+        users = ensure_users("http://127.0.0.1:8006", RESULTS / "users_v2_monolith.csv", 30)
         run([PY, "run_scenario.py", "--scenario", tag,
              "--container", "backend-monolith-baseline-1", "--mode", "crash",
-             "--target-health", "http://localhost:8006/health", "--host", "http://localhost:8006",
+             "--target-health", "http://127.0.0.1:8006/health", "--host", "http://127.0.0.1:8006",
              "--users-csv", str(users), "--sample-audio", a.audio, "--load-mode", "sync",
              "--users", str(a.e6_users), "--duration-s", duration, "--fault-at", fault_at],
             HERE / "e6_fault_injection")

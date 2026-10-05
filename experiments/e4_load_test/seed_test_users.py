@@ -4,7 +4,7 @@ round-robins through these so concurrent logins aren't all hitting the same
 account (more representative of real concurrent load).
 
 Usage:
-    python seed_test_users.py --base-url http://localhost:8000 --count 50 --out users.csv
+    python seed_test_users.py --base-url http://127.0.0.1:8000 --count 50 --out users.csv
 """
 import argparse
 import csv
@@ -19,7 +19,7 @@ PASSWORD = "ExperimentPass123!"
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default="http://localhost:8000")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--count", type=int, default=50)
     parser.add_argument("--out", default="users.csv")
     args = parser.parse_args()

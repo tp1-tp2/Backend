@@ -143,7 +143,7 @@ async def run(args) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--label", required=True)
-    ap.add_argument("--base-url", default="http://localhost:8004")
+    ap.add_argument("--base-url", default="http://127.0.0.1:8004")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--audio")
     src.add_argument("--manifest")

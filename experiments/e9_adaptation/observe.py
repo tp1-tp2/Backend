@@ -163,7 +163,7 @@ async def run(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--label", required=True)
-    ap.add_argument("--base-url", default="http://localhost:8004")
+    ap.add_argument("--base-url", default="http://127.0.0.1:8004")
     ap.add_argument("--audio", required=True)
     ap.add_argument("--idle-s", type=float, default=30)
     ap.add_argument("--burst-s", type=float, default=120)
