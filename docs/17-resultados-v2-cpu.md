@@ -1,4 +1,4 @@
-# Resultados v2 en CPU — consolidado (2026-10-04, 23:59)
+# Resultados v2 en CPU — consolidado (actualizado 2026-10-05, 01:55)
 
 Resultados de la **segunda iteración** de la arquitectura, medidos en el equipo de evaluación **sin GPU** con el **corpus real** y **3 repeticiones** por condición. Reemplaza a `docs/16-resultados-cpu-parciales.md`.
 
@@ -6,7 +6,7 @@ Resultados de la **segunda iteración** de la arquitectura, medidos en el equipo
 - Pendientes en GPU: `docs/15-pendientes-gpu.md`.
 - Datos crudos: `experiments/results/` (no versionado).
 
-**Estado:** E6, E8, E9 y E4 completos. **E3 en curso** (termina hacia las 02:00). Control de WER sobre los 2111 clips **pendiente** (mañana).
+**Estado:** E6, E8, E9, E4 y E3 **completos**. Pendiente: control de WER sobre los 2111 clips (mañana) y lo de GPU.
 
 ---
 
@@ -136,6 +136,27 @@ Sin pérdidas ni duplicados. El único envío no aceptado fue un 500 en el pico 
 
 ---
 
+## 4b. Rendimiento frente al monolito — E3 v2
+
+Misma rampa que E4 (10 → 1000 usuarios, 180 s por escalón), 3 repeticiones por arquitectura. **Ambas arquitecturas con el mismo motor (CTranslate2), la misma precisión fijada (fp32, sin adaptación) y las mismas 3 líneas de inferencia**, para aislar el estilo arquitectónico. El monolito no tiene admisión en el borde, ni cola asíncrona ni adaptación. Informe completo en `experiments/results/e3v2_report.md`.
+
+| Usuarios | Propuesta: goodput | Propuesta: p50 / p95 (s) | Propuesta: fallos | Monolito: goodput | Monolito: p50 / p95 (s) | Monolito: fallos |
+|---|---|---|---|---|---|---|
+| 10 | **0.56** [0.53–0.57] | **14.9 / 19.8** | — | 0.48 [0.31–0.50] | 15.6 / 24.5 | — |
+| 50 | **0.56** | 17.7 / 21.7 | Exceso con 503 | 0.01 | 22.3 / 23.0 (2 solicitudes) | Sin respuesta |
+| 100 | **0.45** | 21.0 / 26.5 | Exceso con 503 | **0** | — | 100 % sin respuesta (300 s) |
+| 200 | **0.33** | 27.9 / 34.5 | Exceso con 503 | **0** | — | 100 % sin respuesta |
+| 500 | **0.35** | 30.4 / 37.1 | Exceso con 503 | **0** | — | 100 % sin respuesta |
+| 1000 | **0.37** | 32.1 / 41.2 | Exceso con 503; 0 % 5xx | **0** | — | 100 % sin respuesta |
+
+**Prueba estadística (10 usuarios, el único escalón donde ambas completan solicitudes):** U de Mann-Whitney, p = 0.034, delta de Cliff = −0.107 (**despreciable**). Mediana de 14.9 s (propuesta) frente a 15.6 s (monolito). En carga baja ambas responden en tiempos equivalentes; la propuesta tiene un p95 menor (19.8 frente a 24.5 s) y un goodput 17 % mayor. Las tres llamadas HTTP extra entre servicios no penalizan.
+
+**Por qué colapsa el monolito desde 50 usuarios** (verificado: el contenedor no se reinició ni sufrió OOM, y siguió procesando solicitudes ya abandonadas): su único *worker* ejecuta el login con **bcrypt síncrono** en el mismo proceso que la transcripción. Cada usuario nuevo de la rampa bloquea el bucle de eventos unos 0.25 s, y con unos 10 logins por segundo el proceso deja de atender todo, transcripciones incluidas. En la propuesta, el mismo código vive en auth-service con 4 *workers* propios y la inferencia sigue sin interferencias. Es aislamiento de fallos **y de competencia por recursos** entre componentes.
+
+**C3.3: se cumple.** La propuesta no es más lenta que el monolito: el efecto es despreciable en carga baja, y bajo carga la propuesta sigue atendiendo mientras el monolito deja de responder.
+
+---
+
 ## 5. Criterios de aceptación (segunda iteración)
 
 | Código | Resultado | Estado |
@@ -153,7 +174,7 @@ Sin pérdidas ni duplicados. El único envío no aceptado fue un 500 en el pico 
 | C2.4 | La adaptación que no rindió se revirtió sola | **Cumple** |
 | C3.1 | RTF mediano de 0.149 sobre el corpus (v1) y 0.069 con CTranslate2 int8 (muestra) | **Cumple** |
 | C3.2 | p50 de 9.5 s con 10 usuarios y un clip de 24 s (local); 4.7 s en la nube (v1) | **Cumple** |
-| C3.3 | E3: propuesta frente a monolito con el mismo motor | **En curso** |
+| C3.3 | Con 10 usuarios: 14.9 frente a 15.6 s (p = 0.034, δ = −0.107, despreciable). Desde 50 usuarios el monolito deja de responder y la propuesta mantiene 0.33–0.56 req/s | **Cumple** |
 | C3.4 | Requiere GPU (prueba de humo previa: 5.4×) | **Pendiente (GPU)** |
 | C4.x | Sin cambios respecto del capítulo 5 v1 | — |
 | C5.x | Usabilidad | Pendiente |
@@ -188,8 +209,6 @@ Tests: api-gateway **75**, asr-service **44**, audio-processor **26**; todos pas
 
 | Pendiente | Cuándo |
 |---|---|
-| E3: propuesta frente a monolito (C3.3) | En curso; termina hacia las 02:00 |
-| Rellenar E3 en `cap-5-extracted.md` (el borrador ya integra todo lo anterior) | Al terminar E3 |
 | Control de WER de CTranslate2 sobre 2111 clips y RTF del corpus | Mañana |
 | Todo lo de GPU | `docs/15-pendientes-gpu.md` |
 | Commit de los cambios de esta sesión | Al cerrar |
