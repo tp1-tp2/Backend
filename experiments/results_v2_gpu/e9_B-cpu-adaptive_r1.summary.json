@@ -1,0 +1,44 @@
+{
+  "label": "B-cpu-adaptive_r1",
+  "burst": {
+    "start_s": 30.001761198043823,
+    "end_s": 177.20603394508362,
+    "concurrency": 24
+  },
+  "decisions_total": 3,
+  "decisions_applied": 2,
+  "applied_by_axis": {
+    "device": 0,
+    "compute_type": 2,
+    "batch_size": 0
+  },
+  "reaction_time_s": 14.97,
+  "state_at_start": {
+    "t": 0.0,
+    "device": "cpu",
+    "compute_type": "fp32",
+    "batch_size": 1,
+    "queue_depth": 0,
+    "in_flight": 0
+  },
+  "state_at_end": {
+    "t": 266.81,
+    "device": "cpu",
+    "compute_type": "fp32",
+    "batch_size": 1,
+    "queue_depth": 0,
+    "in_flight": 0
+  },
+  "reverted_after_burst": true,
+  "before_first_decision": {
+    "n": 8,
+    "req_per_s": 0.534,
+    "p50_s": 8.574
+  },
+  "after_first_decision": {
+    "n": 114,
+    "req_per_s": 0.862,
+    "p50_s": 27.789
+  },
+  "c2_3_met": true
+}

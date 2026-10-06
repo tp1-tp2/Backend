@@ -175,7 +175,7 @@ Misma rampa que E4 (10 → 1000 usuarios, 180 s por escalón), 3 repeticiones po
 | C3.1 | RTF mediano de 0.149 sobre el corpus (v1) y 0.069 con CTranslate2 int8 (muestra) | **Cumple** |
 | C3.2 | p50 de 9.5 s con 10 usuarios y un clip de 24 s (local); 4.7 s en la nube (v1) | **Cumple** |
 | C3.3 | Con 10 usuarios: 14.9 frente a 15.6 s (p = 0.034, δ = −0.107, despreciable). Desde 50 usuarios el monolito deja de responder y la propuesta mantiene 0.33–0.56 req/s | **Cumple** |
-| C3.4 | Requiere GPU (prueba de humo previa: 5.4×) | **Pendiente (GPU)** |
+| C3.4 | Requiere GPU. Medido en GPU: `cuda-fp16-b8` = 8.8× `cpu-fp32-b1` con WER sin diferencia significativa (`docs/18`, §1) | **Cumple (GPU)** |
 | C4.x | Sin cambios respecto del capítulo 5 v1 | — |
 | C5.x | Usabilidad | Pendiente |
 
@@ -199,7 +199,7 @@ Tests: api-gateway **75**, asr-service **44**, audio-processor **26**; todos pas
 
 - **Generador de carga en el mismo equipo:** con 500–1000 usuarios, sus reintentos inmediatos compiten por la CPU. El goodput de esos escalones es una **cota inferior**.
 - **Proxy de Docker Desktop:** con 1000 usuarios se satura y retiene conexiones que entrega a la corrida siguiente. Se añadió una espera de vaciado (`quiesce()`) entre corridas y se descartaron y repitieron las repeticiones contaminadas (`results/e4_S2c_r3_proxy_backlog/`, `results/e4_S2c_cap10_slotleak/`). Los experimentos usan `127.0.0.1`, porque el relay IPv6 de `localhost` se cuelga.
-- **Sin GPU:** C3.4 y la conmutación CPU↔GPU (RQ1) quedan para el equipo con RTX A1000.
+- **Sin GPU:** C3.4 y la conmutación CPU↔GPU (RQ1) no se pudieron medir en este equipo; se evaluaron en un equipo con GPU (`docs/18-resultados-v2-gpu.md`).
 - **Un solo clip en las cargas:** la variabilidad de duración se cubre en E8 (muestra estratificada) y en E2 (corpus).
 - **Control de WER del motor nuevo:** verificado con 30 clips; los 2111 quedan pendientes.
 
@@ -210,5 +210,5 @@ Tests: api-gateway **75**, asr-service **44**, audio-processor **26**; todos pas
 | Pendiente | Cuándo |
 |---|---|
 | Control de WER de CTranslate2 sobre 2111 clips y RTF del corpus | Mañana |
-| Todo lo de GPU | `docs/15-pendientes-gpu.md` |
+| Todo lo de GPU | **Hecho**: `docs/18-resultados-v2-gpu.md` |
 | Commit de los cambios de esta sesión | Al cerrar |

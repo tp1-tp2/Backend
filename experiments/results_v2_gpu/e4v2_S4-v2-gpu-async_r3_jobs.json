@@ -1,0 +1,12 @@
+{
+  "submitted": 8372,
+  "accepted": 8372,
+  "acceptance_rate": 1.0,
+  "processed": 8372,
+  "failed": 0,
+  "duplicates": 0,
+  "reclaimed": 0,
+  "completion_rate": 1.0,
+  "backlog_after_drain": 0,
+  "drain_seconds_after_locust": 0.0
+}

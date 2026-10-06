@@ -4,6 +4,21 @@ Guía para ejecutar en el equipo con **GPU NVIDIA (RTX A1000, 8 GB)** lo que no 
 
 **Actualizado el 2026-10-05**, después de completar toda la validación en CPU. Los resultados de CPU (`docs/17-resultados-v2-cpu.md`) ya están en el capítulo 5 y **no se repiten aquí**: E6, E8 en CPU, E9-B, E4 S1/S2/S2b/S2c y E3 en CPU.
 
+## Estado (2026-10-05)
+
+**Completado: todo lo obligatorio (1–6).** Resultados en `docs/18-resultados-v2-gpu.md` y evidencia en `experiments/results_v2_gpu/`.
+
+| # | Experimento | Estado | Resultado |
+|---|---|---|---|
+| 1 | Verificación GPU | Hecho | asr-service y monolito en `cuda` |
+| 2 | E8 GPU (+ referencia `ct2-int8-l3t2`) | Hecho | C3.4 cumple: `cuda-fp16-b8` = 8.8× `cpu-fp32-b1` (3.5× la mejor CPU), WER sin diferencia (p = 0.18) |
+| 3 | E9 A, B y C (3 repeticiones) | Hecho | C2.3 en 9/9; migración CPU→GPU en 3/3 (en reposo) |
+| 4 | E4 S3 → N = 73 → S3c y S4 (3 repeticiones) | Hecho | C2.1 y C2.2 cumplen; S4: 25 151/25 151 trabajos completados |
+| 5 | E3 GPU (3 repeticiones) | Hecho | C3.3 cumple: propuesta más rápida en los 6 escalones (efecto grande) |
+| 6 | E2 GPU | Hecho | C3.1 cumple: RTF mediano 0.031; WER mediana 0.697 (igual que en CPU) |
+| 7 | (Opcional) E6 con 50 usuarios | No ejecutado | — |
+| 8 | (Opcional) Topología híbrida / Azure | No ejecutado | — |
+
 ## Qué queda pendiente y para qué criterio
 
 | # | Experimento | Mide | Criterio / pregunta | Duración aprox. |

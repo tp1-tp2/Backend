@@ -1,0 +1,44 @@
+{
+  "label": "A-gpu-adaptive_r3",
+  "burst": {
+    "start_s": 30.000377893447876,
+    "end_s": 151.954274892807,
+    "concurrency": 24
+  },
+  "decisions_total": 9,
+  "decisions_applied": 8,
+  "applied_by_axis": {
+    "device": 0,
+    "compute_type": 2,
+    "batch_size": 6
+  },
+  "reaction_time_s": 3.97,
+  "state_at_start": {
+    "t": 0.0,
+    "device": "cuda",
+    "compute_type": "fp32",
+    "batch_size": 8,
+    "queue_depth": 0,
+    "in_flight": 0
+  },
+  "state_at_end": {
+    "t": 241.12,
+    "device": "cuda",
+    "compute_type": "fp32",
+    "batch_size": 8,
+    "queue_depth": 0,
+    "in_flight": 0
+  },
+  "reverted_after_burst": true,
+  "before_first_decision": {
+    "n": 16,
+    "req_per_s": 4.031,
+    "p50_s": 3.946
+  },
+  "after_first_decision": {
+    "n": 1136,
+    "req_per_s": 9.628,
+    "p50_s": 2.389
+  },
+  "c2_3_met": true
+}
